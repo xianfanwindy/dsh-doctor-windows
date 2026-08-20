@@ -22,7 +22,7 @@
     "lint": "oxlint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "check": "corepack pnpm run typecheck && corepack pnpm run lint && corepack pnpm run test:coverage",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage",
     "prepack": "pnpm run build"
   },
   "dependencies": {
