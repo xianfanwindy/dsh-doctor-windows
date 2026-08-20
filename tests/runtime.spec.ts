@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Stats } from 'node:fs'
 import type { CommandCheckResult } from '../src/checks/commands.ts'
 import { checkRuntime } from '../src/checks/runtime.ts'
 import type { RunResult, SystemAccess } from '../src/system.ts'
@@ -19,12 +20,14 @@ interface RuntimeSystemOptions {
   readonly shimError?: boolean
   readonly files?: Readonly<Record<string, string>>
   readonly absent?: readonly string[]
+  readonly directories?: readonly string[]
   readonly onRun?: (file: string, args: readonly string[], signal: AbortSignal | undefined) => void
 }
 
 function runtimeSystem(options: RuntimeSystemOptions = {}): SystemAccess {
   const files = new Map(Object.entries(options.files ?? {}).map(([path, value]) => [path.toLowerCase(), value]))
   const absent = new Set((options.absent ?? []).map((path) => path.toLowerCase()))
+  const directories = new Set((options.directories ?? []).map((path) => path.toLowerCase()))
 
   return {
     platform: 'win32',
@@ -35,11 +38,11 @@ function runtimeSystem(options: RuntimeSystemOptions = {}): SystemAccess {
     async run(file, args, signal) {
       options.onRun?.(file, args, signal)
       if (file === commands.commands.node) return options.node ?? { exitCode: 0, stdout: 'v22.19.0\n', stderr: '' }
-      if (file === commands.commands.dsh || file.toLowerCase().endsWith('\\dsh.exe')) return options.dsh ?? { exitCode: 0, stdout: '0.1.0\n', stderr: '' }
+      if (file === commands.commands.dsh || file.toLowerCase().endsWith('\\dsh.exe') || file.toLowerCase().endsWith('\\dsh.ps1')) return options.dsh ?? { exitCode: 0, stdout: '0.1.0\n', stderr: '' }
       throw new Error(`Unexpected command: ${file} ${args.join(' ')}`)
     },
     async readText(path) {
-      if (path === commands.commands.dsh) {
+      if (path === commands.commands.dsh || path.toLowerCase().endsWith('\\dsh.ps1')) {
         if (options.shimError) throw new Error('Shim unreadable')
         return options.shim ?? ''
       }
@@ -48,7 +51,10 @@ function runtimeSystem(options: RuntimeSystemOptions = {}): SystemAccess {
       return value
     },
     async readDir() { throw new Error('not used') },
-    async stat() { throw new Error('not used') },
+    async stat(path) {
+      if (absent.has(path.toLowerCase())) throw new Error(`Missing: ${path}`)
+      return { isFile: () => !directories.has(path.toLowerCase()) } as Stats
+    },
     async lstat() { throw new Error('not used') },
     async realpath() { throw new Error('not used') },
     async access(path) {
@@ -64,6 +70,22 @@ function runtimeSystem(options: RuntimeSystemOptions = {}): SystemAccess {
 
 function shimFor(target: string): string {
   return `@echo off\r\nnode "${target}" %*\r\n`
+}
+
+function standardPowerShellShim(): string {
+  return [
+    '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
+    '$exe=""',
+    'if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {',
+    '  $exe=".exe"',
+    '}',
+    'if (Test-Path "$basedir/node$exe") {',
+    '  & "$basedir/node$exe" "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args',
+    '} else {',
+    '  & "node$exe" "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args',
+    '}',
+    'exit $LASTEXITCODE',
+  ].join('\r\n')
 }
 
 function installation(root: string, version = '0.1.0', nodeRange = '^22.19.0 || >=24.0.0'): Readonly<Record<string, string>> {
@@ -189,11 +211,15 @@ describe('checkRuntime', () => {
     expect(result.limitations).toContain('The selected DSH package metadata could not be validated.')
   })
 
-  it('accepts an npm sibling package manifest reference and a string CLI declaration', async () => {
-    // Would catch rejecting the standard PowerShell npm shim layout without reading unrelated paths.
+  it('accepts the standard npm PowerShell basedir CLI reference', async () => {
+    // Would catch rejecting npm's emitted PowerShell shim while accepting invented variable conventions.
     const root = 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
     const result = await checkRuntime(runtimeSystem({
-      shim: '& "$PSScriptRoot\\node_modules\\@deepseek-ai\\dsh\\package.json"\r\n',
+      shim: standardPowerShellShim(),
       files: {
         [`${root}\\package.json`]: JSON.stringify({
           version: '0.1.0',
@@ -201,7 +227,7 @@ describe('checkRuntime', () => {
           bin: 'lib/bin.js',
         }),
       },
-    }), commands)
+    }), powershellCommands)
 
     expect(result.installationRoot).toBe(root)
     expect(result.findings).toContainEqual({
@@ -209,6 +235,42 @@ describe('checkRuntime', () => {
       severity: 'PASS',
       conclusion: 'Node.js 22.19.0 satisfies >=22.0.0.',
     })
+  })
+
+  it('does not trust an arbitrary PowerShell variable as the shim directory', async () => {
+    // Would catch treating an attacker-controlled variable name as proof of the selected npm installation root.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const result = await checkRuntime(runtimeSystem({
+      shim: '$basedir="C:\\Other"\r\n& "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args\r\n',
+      files: installation(installationRoot),
+    }), powershellCommands)
+
+    expect(result.installationRoot).toBeUndefined()
+    expect(result.findings).toContainEqual({
+      checkId: 'runtime.dsh.installation-unknown',
+      severity: 'WARNING',
+      conclusion: 'The selected dsh installation could not be determined from its shim.',
+    })
+  })
+
+  it('accepts a basedir-anchored sibling package manifest reference', async () => {
+    // Would catch accepting only the CLI form and needlessly rejecting the equally anchored package metadata form.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const result = await checkRuntime(runtimeSystem({
+      shim: [
+        '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
+        'Test-Path "$basedir/node_modules/@deepseek-ai/dsh/package.json"',
+      ].join('\r\n'),
+      files: installation(installationRoot),
+    }), powershellCommands)
+
+    expect(result.installationRoot).toBe(installationRoot)
   })
 
   it('accepts an npm sibling CLI target reference', async () => {
@@ -284,6 +346,38 @@ describe('checkRuntime', () => {
     }
   })
 
+  it('rejects invalid manifest versions and unsafe or non-file CLI entries', async () => {
+    // Would catch returning a validated installation root for metadata that cannot safely identify the DSH entry file.
+    const cases: ReadonlyArray<{ readonly version?: string, readonly bin: string, readonly directories?: readonly string[] }> = [
+      { version: 'not-a-semver', bin: 'lib/bin.js' },
+      { bin: '' },
+      { bin: 'C:\\Other\\bin.js' },
+      { bin: '..\\outside.js' },
+      { bin: 'lib/bin.js', directories: [`${installationRoot}\\lib\\bin.js`] },
+    ]
+
+    for (const fixture of cases) {
+      const result = await checkRuntime(runtimeSystem({
+        shim: shimFor(cliTarget),
+        files: {
+          [`${installationRoot}\\package.json`]: JSON.stringify({
+            version: fixture.version ?? '0.1.0',
+            engines: { node: '^22.19.0 || >=24.0.0' },
+            bin: fixture.bin,
+          }),
+        },
+        directories: fixture.directories,
+      }), commands)
+
+      expect(result.installationRoot).toBeUndefined()
+      expect(result.findings).toContainEqual({
+        checkId: 'runtime.dsh.installation-unknown',
+        severity: 'WARNING',
+        conclusion: 'The selected dsh installation metadata is incomplete or invalid.',
+      })
+    }
+  })
+
   it('forwards the request abort signal only to selected version commands', async () => {
     // Would catch a cancelled doctor request leaving the two bounded subprocess probes running.
     const controller = new AbortController()
@@ -343,6 +437,12 @@ describe('checkRuntime', () => {
       severity: 'PASS',
       conclusion: 'Node.js 22.19.0 satisfies ^22.19.0 || >=24.0.0.',
     })
+    expect(result.findings).toContainEqual({
+      checkId: 'runtime.dsh.installation-unknown',
+      severity: 'WARNING',
+      conclusion: 'The selected dsh installation could not be determined from its shim.',
+    })
+    expect(result.limitations).toContain('No selected dsh command is available.')
   })
 
   it('reports selected version command failures without empty stderr evidence', async () => {
