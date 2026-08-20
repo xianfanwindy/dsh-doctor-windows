@@ -99,6 +99,27 @@ describe('checkCommands', () => {
     })
   })
 
+  it('does not block a selected script when a higher-precedence policy overrides Restricted', async () => {
+    // Would catch a lower-precedence LocalMachine Restricted policy overriding CurrentUser RemoteSigned.
+    const result = await checkCommands(createFakeSystem({
+      powershell: candidates(
+        { Name: 'node', Path: 'C:\\Tools\\node.exe', CommandType: 'Application' },
+        { Name: 'dsh', Path: 'C:\\Tools\\dsh.ps1', CommandType: 'ExternalScript' },
+        { Name: 'pnpm', Path: 'C:\\Tools\\pnpm.cmd', CommandType: 'Application' },
+      ),
+      pwsh: candidates(),
+      executionPolicyOutput: JSON.stringify([
+        { Scope: 'MachinePolicy', ExecutionPolicy: 'Undefined' },
+        { Scope: 'UserPolicy', ExecutionPolicy: 'Undefined' },
+        { Scope: 'Process', ExecutionPolicy: 'Undefined' },
+        { Scope: 'CurrentUser', ExecutionPolicy: 'RemoteSigned' },
+        { Scope: 'LocalMachine', ExecutionPolicy: 'Restricted' },
+      ]),
+    }))
+
+    expect(result.findings).not.toContainEqual(expect.objectContaining({ checkId: 'command.dsh.execution-policy' }))
+  })
+
   it('passes each command when one usable candidate exists', async () => {
     // Would catch command discovery that finds paths but fails to surface selected commands as passes.
     const result = await checkCommands(createFakeSystem({

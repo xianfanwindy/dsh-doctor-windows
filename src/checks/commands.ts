@@ -30,6 +30,7 @@ interface ProbeResult {
 
 const COMMAND_NAMES: readonly CommandName[] = ['node', 'dsh', 'pnpm']
 const SHELLS: readonly Shell[] = ['powershell.exe', 'pwsh.exe']
+const POLICY_PRECEDENCE = ['MachinePolicy', 'UserPolicy', 'Process', 'CurrentUser', 'LocalMachine']
 const COMMAND_PROBE = '@(Get-Command node,dsh,pnpm -All -CommandType Application,ExternalScript | Select-Object Name,Path,CommandType) | ConvertTo-Json -Compress'
 const POLICY_PROBE = 'Get-ExecutionPolicy -List | Select-Object Scope,ExecutionPolicy | ConvertTo-Json -Compress'
 
@@ -118,14 +119,19 @@ function multipleFinding(name: CommandName, candidates: readonly Candidate[]): F
   }
 }
 
-function hasRestrictedPolicy(stdout: string): boolean {
-  if (stdout.trim() === '') return false
+function effectivePolicy(stdout: string): string | undefined {
+  if (stdout.trim() === '') return undefined
   try {
     const values: unknown[] = Array.isArray(JSON.parse(stdout)) ? JSON.parse(stdout) : [JSON.parse(stdout)]
-    return values.some((value) => typeof value === 'object' && value !== null
-      && (value as Record<string, unknown>).ExecutionPolicy === 'Restricted')
+    for (const scope of POLICY_PRECEDENCE) {
+      const value = values.find((item) => typeof item === 'object' && item !== null
+        && (item as Record<string, unknown>).Scope === scope)
+      const policy = value === undefined ? undefined : (value as Record<string, unknown>).ExecutionPolicy
+      if (typeof policy === 'string' && policy !== 'Undefined') return policy
+    }
+    return undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
@@ -152,7 +158,7 @@ export async function checkCommands(system: SystemAccess): Promise<CommandCheckR
   }
 
   const policy = await system.run('powershell.exe', shellArgs(POLICY_PROBE))
-  if (selected.dsh?.path.toLowerCase().endsWith('.ps1') && policy.exitCode === 0 && policy.error === undefined && hasRestrictedPolicy(policy.stdout)) {
+  if (selected.dsh?.path.toLowerCase().endsWith('.ps1') && policy.exitCode === 0 && policy.error === undefined && effectivePolicy(policy.stdout) === 'Restricted') {
     findings.push({
       checkId: 'command.dsh.execution-policy',
       severity: 'BLOCKER',
