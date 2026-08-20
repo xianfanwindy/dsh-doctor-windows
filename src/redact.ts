@@ -11,9 +11,9 @@ export interface RedactionRoots {
 }
 
 const URL_TOKEN = /https?:\/\/[^\s<>"']+/giu
-const CREDENTIAL_ASSIGNMENT = /\b(?:api[_-]?key|authorization|credential|deepseek[_-]?api[_-]?key|password|secret|token)\b\s*([:=])\s*[^\s,;]+/giu
+const CREDENTIAL_ASSIGNMENT = /(?<![A-Za-z0-9_-])(?:[A-Za-z0-9]+_)*(?:api[_-]?key|authorization|credential|deepseek[_-]?api[_-]?key|password|secret|token)(?:_[A-Za-z0-9]+)*\s*([:=])\s*[^\s,;]+/giu
 const BEARER_CREDENTIAL = /\bbearer\s+[^\s,;]+/giu
-const GITHUB_TOKEN = /\bgh[pousr]_[A-Za-z0-9]{20,}\b/giu
+const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/giu
 const DEEPSEEK_TOKEN = /\b(?:sk|ds)-[A-Za-z0-9_-]{20,}\b/giu
 const HIGH_ENTROPY_TOKEN = /[A-Za-z0-9!@#$%^&*+=._~/-]{32,}/gu
 const TRAILING_URL_PUNCTUATION = /[),.;:!?\]}]+$/u

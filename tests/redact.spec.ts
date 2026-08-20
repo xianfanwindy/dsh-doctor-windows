@@ -90,6 +90,31 @@ describe('sanitizeReport', () => {
     expect(result.toLowerCase()).not.toContain('sk-abcdefghijklmnopqrstuvwxyz0123456789')
   })
 
+  it('redacts a short secret assigned to GITHUB_TOKEN', () => {
+    const result = redacted('GITHUB_TOKEN=short-secret')
+
+    expect(result).not.toContain('short-secret')
+  })
+
+  it('redacts a short secret assigned to GH_TOKEN', () => {
+    const result = redacted('GH_TOKEN=short-secret')
+
+    expect(result).not.toContain('short-secret')
+  })
+
+  it('redacts lowercase github_pat tokens without relying on entropy', () => {
+    const token = 'github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const result = redacted(token)
+
+    expect(result).not.toContain(token)
+  })
+
+  it('keeps ordinary prose and non-credential identifiers', () => {
+    const value = 'The feature_flag=enabled has tokenized_label=ordinary-id and retry_count=3.'
+
+    expect(redacted(value)).toContain(value)
+  })
+
   it('redacts high-entropy 32-character tokens without redacting ordinary prose or identifiers', () => {
     const token = 'aB3$eF6!hJ9@kL2#mN5%pQ8&rS1*tV4+'
     const result = redacted(`The profile doctor-01 is valid. ${token}`)
