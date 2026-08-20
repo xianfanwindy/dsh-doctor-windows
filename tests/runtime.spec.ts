@@ -285,6 +285,56 @@ describe('checkRuntime', () => {
     }
   })
 
+  it('rejects inline and block-comment basedir references', async () => {
+    // Would catch inert PowerShell comments manufacturing a validated npm installation root.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const standardAssignment = '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent'
+    const fixtures = [
+      [standardAssignment, 'Write-Output "it\'s safe" # $basedir/node_modules/@deepseek-ai/dsh/lib/bin.js'],
+      [
+        standardAssignment,
+        '<#',
+        '  $basedir/node_modules/@deepseek-ai/dsh/lib/bin.js',
+        '  $basedir/node_modules/@deepseek-ai/dsh/package.json',
+        '#>',
+      ],
+    ]
+
+    for (const lines of fixtures) {
+      const result = await checkRuntime(runtimeSystem({
+        shim: lines.join('\r\n'),
+        files: installation(installationRoot),
+      }), powershellCommands)
+
+      expect(result.installationRoot).toBeUndefined()
+      expect(result.findings).toContainEqual({
+        checkId: 'runtime.dsh.installation-unknown',
+        severity: 'WARNING',
+        conclusion: 'The selected dsh installation could not be determined from its shim.',
+      })
+    }
+  })
+
+  it('retains a basedir target with a hash inside a quoted argument', async () => {
+    // Would catch comment filtering treating a literal hash in an executable command as an inline comment.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const result = await checkRuntime(runtimeSystem({
+      shim: [
+        '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
+        '& "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" "#literal" $args',
+      ].join('\r\n'),
+      files: installation(installationRoot),
+    }), powershellCommands)
+
+    expect(result.installationRoot).toBe(installationRoot)
+  })
+
   it('accepts a basedir-anchored sibling package manifest reference', async () => {
     // Would catch accepting only the CLI form and needlessly rejecting the equally anchored package metadata form.
     const powershellCommands: CommandCheckResult = {

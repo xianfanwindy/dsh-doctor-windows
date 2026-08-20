@@ -42,9 +42,40 @@ const STANDARD_BASEDIR_ASSIGNMENT = /^\s*\$basedir\s*=\s*Split-Path\s+\$MyInvoca
 const BASEDIR_TARGET = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu
 const BASEDIR_MANIFEST = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu
 
+function uncommentedPowerShellLines(shim: string): readonly string[] {
+  const lines: string[] = []
+  let blockComment = false
+  for (const line of shim.split(/\r?\n/u)) {
+    let code = ''
+    let quote: '"' | "'" | undefined
+    for (let index = 0; index < line.length; index++) {
+      const character = line[index]!
+      const next = line[index + 1]
+      if (blockComment) {
+        if (character === '#' && next === '>') {
+          blockComment = false
+          index++
+        }
+        continue
+      }
+      if (quote === undefined && character === '<' && next === '#') {
+        blockComment = true
+        index++
+        continue
+      }
+      if (quote === undefined && character === '#') break
+      code += character
+      if (quote === undefined && (character === '"' || character === "'")) quote = character
+      else if (quote === character) quote = undefined
+    }
+    lines.push(code)
+  }
+  return lines
+}
+
 function basedirReference(shim: string): BasedirReference | undefined {
   let state: 'unseen' | 'trusted' | 'invalid' = 'unseen'
-  for (const line of shim.split(/\r?\n/u)) {
+  for (const line of uncommentedPowerShellLines(shim)) {
     const trimmed = line.trim()
     if (trimmed.startsWith('#')) continue
     if (BASEDIR_ASSIGNMENT.test(line)) {
