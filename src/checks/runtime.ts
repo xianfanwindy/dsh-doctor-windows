@@ -39,8 +39,8 @@ type BasedirReference = 'target' | 'manifest'
 
 const BASEDIR_ASSIGNMENT = /^\s*\$basedir\s*=/iu
 const STANDARD_BASEDIR_ASSIGNMENT = /^\s*\$basedir\s*=\s*Split-Path\s+\$MyInvocation\.MyCommand\.Definition\s+-Parent\s*$/iu
-const BASEDIR_TARGET = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu
-const BASEDIR_MANIFEST = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu
+const BASEDIR_TARGET = /^\s*&\s+(?:"\$basedir[\\/]node\$exe"|"node\$exe")\s+"\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js"\s+(?:.*\s+)?\$args\s*$/iu
+const BASEDIR_MANIFEST = /^\s*Test-Path\s+"\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json"\s*$/iu
 
 function uncommentedPowerShellLines(shim: string): readonly string[] {
   const lines: string[] = []

@@ -327,7 +327,52 @@ describe('checkRuntime', () => {
     const result = await checkRuntime(runtimeSystem({
       shim: [
         '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
-        '& "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" "#literal" $args',
+        '& "node$exe" "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" "#literal" $args',
+      ].join('\r\n'),
+      files: installation(installationRoot),
+    }), powershellCommands)
+
+    expect(result.installationRoot).toBe(installationRoot)
+  })
+
+  it('rejects inert basedir CLI and manifest strings', async () => {
+    // Would catch arbitrary string data after a valid binding manufacturing a sibling installation root.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const standardAssignment = '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent'
+    const fixtures = [
+      [standardAssignment, 'Write-Output "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js"'],
+      [standardAssignment, '"$basedir/node_modules/@deepseek-ai/dsh/package.json"'],
+      [standardAssignment, '$candidate = "$basedir/node_modules/@deepseek-ai/dsh/package.json"'],
+    ]
+
+    for (const lines of fixtures) {
+      const result = await checkRuntime(runtimeSystem({
+        shim: lines.join('\r\n'),
+        files: installation(installationRoot),
+      }), powershellCommands)
+
+      expect(result.installationRoot).toBeUndefined()
+      expect(result.findings).toContainEqual({
+        checkId: 'runtime.dsh.installation-unknown',
+        severity: 'WARNING',
+        conclusion: 'The selected dsh installation could not be determined from its shim.',
+      })
+    }
+  })
+
+  it('retains whitespace and case-tolerant PATH-node npm invocation', async () => {
+    // Would catch narrowing the accepted npm form so far that the PATH-node branch no longer resolves.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const result = await checkRuntime(runtimeSystem({
+      shim: [
+        '  $BASEDIR = split-path $MYINVOCATION.MyCommand.Definition -parent',
+        '  &  "node$exe"  "$BASEDIR/node_modules/@deepseek-ai/dsh/lib/bin.js"  "#literal"  $ARGS',
       ].join('\r\n'),
       files: installation(installationRoot),
     }), powershellCommands)
