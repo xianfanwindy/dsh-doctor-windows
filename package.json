@@ -1,0 +1,48 @@
+{
+  "name": "dsh-doctor-windows",
+  "version": "0.1.0",
+  "description": "Read-only Windows startup diagnostics for DeepSeek Harness",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "packageManager": "pnpm@11.7.0",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    "./plugin": { "types": "./lib/plugin.d.ts", "default": "./lib/plugin.js" }
+  },
+  "bin": { "dsh-doctor": "./lib/cli.js" },
+  "files": ["lib", "cordis.patch.yml", "README.md", "README.zh.md", "LICENSE"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "js-yaml": "^4.2.0",
+    "semver": "^7.8.5"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.20.0",
+    "@types/semver": "^7.7.1",
+    "@vitest/coverage-v8": "^4.1.8",
+    "oxlint": "1.76.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
