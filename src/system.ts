@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, lstat, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
+import { access, lstat, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,8 +24,9 @@ export interface SystemAccess {
   stat(path: string): Promise<Stats>
   lstat(path: string): Promise<Stats>
   realpath(path: string): Promise<string>
-  access(path: string): Promise<void>
+  access(path: string, mode?: number): Promise<void>
   makeTempDir(path: string): Promise<string>
+  writeFileExclusive(path: string): Promise<void>
   rename(from: string, to: string): Promise<void>
   removeFile(path: string): Promise<void>
   removeDir(path: string): Promise<void>
@@ -86,8 +87,9 @@ export function createSystemAccess(): SystemAccess {
     stat,
     lstat,
     realpath,
-    access,
+    access: (path, mode) => access(path, mode),
     makeTempDir: mkdtemp,
+    writeFileExclusive: (path) => writeFile(path, '', { flag: 'wx' }),
     rename,
     removeFile: (path) => rm(path),
     removeDir: (path) => rm(path, { recursive: true }),
