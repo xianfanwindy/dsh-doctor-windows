@@ -1,0 +1,181 @@
+import { win32 } from 'node:path'
+import { satisfies, valid, validRange } from 'semver'
+import type { CommandCheckResult } from './commands.ts'
+import type { Finding } from '../model.ts'
+import type { RunResult, SystemAccess } from '../system.ts'
+
+export interface RuntimeCheckResult {
+  readonly findings: readonly Finding[]
+  readonly limitations: readonly string[]
+  readonly environment: Readonly<Record<string, string>>
+  readonly installationRoot?: string
+}
+
+interface InstallationManifest {
+  readonly version: string
+  readonly nodeRange: string
+  readonly cliEntry: string
+}
+
+const BASELINE_NODE_RANGE = '^22.19.0 || >=24.0.0'
+const DSH_PACKAGE = 'node_modules\\@deepseek-ai\\dsh'
+const CLI_SUFFIX = `${DSH_PACKAGE}\\lib\\bin.js`
+
+function normalizedVersion(value: string): string | undefined {
+  return valid(value.trim().replace(/^v/, '')) ?? undefined
+}
+
+function sanitizedStderr(value: string): string {
+  return value.replace(/\p{Cc}/gu, '').trim()
+}
+
+function installationRootFromTarget(target: string): string | undefined {
+  const normalized = target.replaceAll('/', '\\')
+  if (!normalized.toLowerCase().endsWith(CLI_SUFFIX) || !win32.isAbsolute(normalized)) return undefined
+  return win32.dirname(win32.dirname(normalized))
+}
+
+function installationRootFromShim(shim: string, shimPath: string): { readonly root: string, readonly target?: string } | undefined {
+  const absoluteTarget = shim.match(/(?:"|')([^"'\r\n]*node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js)(?:"|')/iu)?.[1]
+  if (absoluteTarget !== undefined) {
+    const target = absoluteTarget.replaceAll('/', '\\')
+    const root = installationRootFromTarget(target)
+    if (root !== undefined) return { root, target }
+  }
+
+  const siblingTarget = /(?:%~dp0|\$PSScriptRoot)[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu.test(shim)
+  if (siblingTarget) {
+    const root = win32.join(win32.dirname(shimPath), 'node_modules', '@deepseek-ai', 'dsh')
+    return { root, target: win32.join(root, 'lib', 'bin.js') }
+  }
+
+  const siblingManifest = /(?:%~dp0|\$PSScriptRoot)[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu.test(shim)
+  if (!siblingManifest) return undefined
+  return { root: win32.join(win32.dirname(shimPath), 'node_modules', '@deepseek-ai', 'dsh') }
+}
+
+function parseManifest(source: string): InstallationManifest | undefined {
+  try {
+    const value: unknown = JSON.parse(source)
+    if (typeof value !== 'object' || value === null) return undefined
+    const manifest = value as Record<string, unknown>
+    const engines = typeof manifest.engines === 'object' && manifest.engines !== null
+      ? manifest.engines as Record<string, unknown>
+      : undefined
+    const nodeRange = engines?.node
+    const cliEntry = typeof manifest.bin === 'string'
+      ? manifest.bin
+      : typeof manifest.bin === 'object' && manifest.bin !== null
+        ? (manifest.bin as Record<string, unknown>).dsh
+        : undefined
+    if (typeof manifest.version !== 'string' || typeof nodeRange !== 'string' || validRange(nodeRange) === null || typeof cliEntry !== 'string') return undefined
+    return { version: manifest.version, nodeRange, cliEntry }
+  } catch {
+    return undefined
+  }
+}
+
+function commandFailure(checkId: string, command: string, result: RunResult): Finding {
+  const evidence = sanitizedStderr(result.stderr)
+  return {
+    checkId,
+    severity: 'BLOCKER',
+    conclusion: `${command} --version exited with code ${result.exitCode}.`,
+    ...(evidence === '' ? {} : { evidence: [evidence] }),
+  }
+}
+
+function unknownInstallation(findings: Finding[], limitations: string[], conclusion: string, limitation: string): void {
+  findings.push({ checkId: 'runtime.dsh.installation-unknown', severity: 'WARNING', conclusion })
+  limitations.push(limitation)
+}
+
+export async function checkRuntime(system: SystemAccess, commandCheck: CommandCheckResult, signal?: AbortSignal): Promise<RuntimeCheckResult> {
+  const findings: Finding[] = []
+  const limitations: string[] = []
+  const environment: Record<string, string> = {}
+  const nodeResult = commandCheck.commands.node === undefined ? undefined : await system.run(commandCheck.commands.node, ['--version'], signal)
+  const dshResult = commandCheck.commands.dsh === undefined ? undefined : await system.run(commandCheck.commands.dsh, ['--version'], signal)
+  const nodeVersion = nodeResult?.exitCode === 0 ? normalizedVersion(nodeResult.stdout) : undefined
+  const dshVersion = dshResult?.exitCode === 0 ? normalizedVersion(dshResult.stdout) : undefined
+
+  if (nodeResult !== undefined && nodeResult.exitCode !== 0) findings.push(commandFailure('runtime.node.version-command', 'node', nodeResult))
+  if (dshResult !== undefined && dshResult.exitCode !== 0) findings.push(commandFailure('runtime.dsh.version-command', 'dsh', dshResult))
+  if (nodeResult !== undefined && nodeResult.exitCode === 0 && nodeVersion === undefined) {
+    findings.push({ checkId: 'runtime.node.version-invalid', severity: 'BLOCKER', conclusion: 'node --version did not return a valid semantic version.' })
+  }
+  if (dshResult !== undefined && dshResult.exitCode === 0 && dshVersion === undefined) {
+    findings.push({ checkId: 'runtime.dsh.version-invalid', severity: 'WARNING', conclusion: 'dsh --version did not return a valid semantic version.' })
+  }
+  if (nodeVersion !== undefined) environment['node.version'] = nodeVersion
+  if (dshVersion !== undefined) environment['dsh.version'] = dshVersion
+
+  const shimPath = commandCheck.commands.dsh
+  if (shimPath === undefined || !['.cmd', '.ps1'].includes(win32.extname(shimPath).toLowerCase())) {
+    if (shimPath !== undefined) unknownInstallation(findings, limitations, 'The selected dsh installation could not be determined from its shim.', 'The selected dsh command is not an npm shim.')
+  } else {
+    let discovered: { readonly root: string, readonly target?: string } | undefined
+    let shimRead = true
+    try {
+      discovered = installationRootFromShim(await system.readText(shimPath), shimPath)
+    } catch {
+      shimRead = false
+      unknownInstallation(findings, limitations, 'The selected dsh installation could not be determined from its shim.', 'The selected dsh shim could not be read.')
+    }
+
+    if (shimRead) {
+      if (discovered === undefined) {
+        unknownInstallation(findings, limitations, 'The selected dsh installation could not be determined from its shim.', 'The selected dsh shim did not contain an accepted DSH installation reference.')
+      } else if (discovered.target !== undefined) {
+        try {
+          await system.access(discovered.target)
+        } catch {
+          findings.push({
+            checkId: 'runtime.dsh.shim-target',
+            severity: 'BLOCKER',
+            conclusion: 'The selected dsh shim references a missing DSH CLI entry.',
+          })
+          discovered = undefined
+        }
+      }
+    }
+
+    if (discovered !== undefined) {
+      const manifestPath = win32.join(discovered.root, 'package.json')
+      let manifest: InstallationManifest | undefined
+      try {
+        manifest = parseManifest(await system.readText(manifestPath))
+        if (manifest !== undefined) await system.access(win32.resolve(discovered.root, manifest.cliEntry))
+      } catch {
+        manifest = undefined
+      }
+      if (manifest === undefined) {
+        unknownInstallation(findings, limitations, 'The selected dsh installation metadata is incomplete or invalid.', 'The selected DSH package metadata could not be validated.')
+      } else {
+        environment['dsh.nodeRange'] = manifest.nodeRange
+        const manifestVersion = normalizedVersion(manifest.version)
+        if (manifestVersion !== undefined) environment['dsh.installationVersion'] = manifestVersion
+        if (dshVersion !== undefined && manifestVersion !== undefined && dshVersion !== manifestVersion) {
+          findings.push({
+            checkId: 'runtime.dsh.version-mismatch',
+            severity: 'WARNING',
+            conclusion: `dsh --version (${dshVersion}) differs from installation metadata (${manifestVersion}).`,
+          })
+        }
+        if (nodeVersion !== undefined) {
+          findings.push(satisfies(nodeVersion, manifest.nodeRange)
+            ? { checkId: 'runtime.node.supported', severity: 'PASS', conclusion: `Node.js ${nodeVersion} satisfies ${manifest.nodeRange}.` }
+            : { checkId: 'runtime.node.unsupported', severity: 'BLOCKER', conclusion: `Node.js ${nodeVersion} does not satisfy ${manifest.nodeRange}.` })
+        }
+        return { findings, limitations, environment, installationRoot: discovered.root }
+      }
+    }
+  }
+
+  if (nodeVersion !== undefined) {
+    findings.push(satisfies(nodeVersion, BASELINE_NODE_RANGE)
+      ? { checkId: 'runtime.node.supported', severity: 'PASS', conclusion: `Node.js ${nodeVersion} satisfies ${BASELINE_NODE_RANGE}.` }
+      : { checkId: 'runtime.node.unsupported', severity: 'BLOCKER', conclusion: `Node.js ${nodeVersion} does not satisfy ${BASELINE_NODE_RANGE}.` })
+  }
+  return { findings, limitations, environment }
+}
