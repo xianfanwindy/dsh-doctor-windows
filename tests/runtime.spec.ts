@@ -256,6 +256,35 @@ describe('checkRuntime', () => {
     })
   })
 
+  it('rejects basedir references outside a live standard npm binding', async () => {
+    // Would catch accepting a target before binding, after reassignment, or solely from a PowerShell comment.
+    const powershellCommands: CommandCheckResult = {
+      ...commands,
+      commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' },
+    }
+    const target = '& "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args'
+    const standardAssignment = '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent'
+    const fixtures = [
+      [target, standardAssignment],
+      [standardAssignment, '$basedir="C:\\Other"', target],
+      [standardAssignment, `# ${target}`],
+    ]
+
+    for (const lines of fixtures) {
+      const result = await checkRuntime(runtimeSystem({
+        shim: lines.join('\r\n'),
+        files: installation(installationRoot),
+      }), powershellCommands)
+
+      expect(result.installationRoot).toBeUndefined()
+      expect(result.findings).toContainEqual({
+        checkId: 'runtime.dsh.installation-unknown',
+        severity: 'WARNING',
+        conclusion: 'The selected dsh installation could not be determined from its shim.',
+      })
+    }
+  })
+
   it('accepts a basedir-anchored sibling package manifest reference', async () => {
     // Would catch accepting only the CLI form and needlessly rejecting the equally anchored package metadata form.
     const powershellCommands: CommandCheckResult = {

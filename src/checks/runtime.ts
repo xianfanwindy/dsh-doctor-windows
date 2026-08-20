@@ -35,8 +35,27 @@ function installationRootFromTarget(target: string): string | undefined {
   return win32.dirname(win32.dirname(normalized))
 }
 
-function isStandardPowerShellBasedir(shim: string): boolean {
-  return /^\s*\$basedir\s*=\s*Split-Path\s+\$MyInvocation\.MyCommand\.Definition\s+-Parent\s*$/imu.test(shim)
+type BasedirReference = 'target' | 'manifest'
+
+const BASEDIR_ASSIGNMENT = /^\s*\$basedir\s*=/iu
+const STANDARD_BASEDIR_ASSIGNMENT = /^\s*\$basedir\s*=\s*Split-Path\s+\$MyInvocation\.MyCommand\.Definition\s+-Parent\s*$/iu
+const BASEDIR_TARGET = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu
+const BASEDIR_MANIFEST = /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu
+
+function basedirReference(shim: string): BasedirReference | undefined {
+  let state: 'unseen' | 'trusted' | 'invalid' = 'unseen'
+  for (const line of shim.split(/\r?\n/u)) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('#')) continue
+    if (BASEDIR_ASSIGNMENT.test(line)) {
+      state = state === 'unseen' && STANDARD_BASEDIR_ASSIGNMENT.test(line) ? 'trusted' : 'invalid'
+      continue
+    }
+    if (state !== 'trusted') continue
+    if (BASEDIR_TARGET.test(line)) return 'target'
+    if (BASEDIR_MANIFEST.test(line)) return 'manifest'
+  }
+  return undefined
 }
 
 function siblingRoot(shimPath: string): string {
@@ -51,16 +70,16 @@ function installationRootFromShim(shim: string, shimPath: string): { readonly ro
     if (root !== undefined) return { root, target }
   }
 
-  const basedir = isStandardPowerShellBasedir(shim)
+  const basedir = basedirReference(shim)
   const siblingTarget = /%~dp0[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu.test(shim)
-    || basedir && /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js(?=[\s"')]|$)/iu.test(shim)
+    || basedir === 'target'
   if (siblingTarget) {
     const root = siblingRoot(shimPath)
     return { root, target: win32.join(root, 'lib', 'bin.js') }
   }
 
   const siblingManifest = /%~dp0[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu.test(shim)
-    || basedir && /\$basedir[\\/]node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]package\.json(?=[\s"')]|$)/iu.test(shim)
+    || basedir === 'manifest'
   if (!siblingManifest) return undefined
   return { root: siblingRoot(shimPath) }
 }
