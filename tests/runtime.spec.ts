@@ -61,6 +61,7 @@ function runtimeSystem(options: RuntimeSystemOptions = {}): SystemAccess {
       if (absent.has(path.toLowerCase())) throw new Error(`Missing: ${path}`)
     },
     async makeTempDir() { throw new Error('not used') },
+    async writeFileExclusive() { throw new Error('not used') },
     async rename() { throw new Error('not used') },
     async removeFile() { throw new Error('not used') },
     async removeDir() { throw new Error('not used') },
