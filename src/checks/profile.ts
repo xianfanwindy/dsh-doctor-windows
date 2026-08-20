@@ -177,14 +177,18 @@ async function checkBundle(system: SystemAccess, specifier: string, anchors: rea
     findings.push(finding('profile.bundle.patch-missing', 'BLOCKER', `Bundle ${specifier} declares an unsafe patch path.`))
     return undefined
   }
+  let canonicalRoot: string
+  let canonicalPath: string
   try {
-    if (!(await system.stat(path)).isFile()) throw new Error('not a regular file')
+    canonicalRoot = await system.realpath(root)
+    canonicalPath = await system.realpath(path)
+    if (!containedPath(canonicalRoot, canonicalPath) || !(await system.stat(canonicalPath)).isFile()) throw new Error('not a contained regular file')
   } catch {
     findings.push(finding('profile.bundle.patch-missing', 'BLOCKER', `Bundle ${specifier} declares a missing patch file.`))
     return undefined
   }
   findings.push(finding('profile.bundle.valid', 'PASS', `Bundle ${specifier} declares a readable Cordis patch.`))
-  return parsePatch(system, path, findings)
+  return parsePatch(system, canonicalPath, findings)
 }
 
 /** Statically checks the selected DSH profile without loading target packages. */
@@ -212,14 +216,14 @@ export async function checkProfile(system: SystemAccess, request: DiagnosticRequ
   } catch {
     parsed = { type: 'parse' }
   }
-  if (parsed.type !== 'manifest') {
+  const bundles = parsed.type === 'manifest' ? parsed.manifest.bundles : undefined
+  if (bundles === undefined) {
     findings.push(parsed.type === 'parse'
       ? finding('profile.manifest.parse', 'BLOCKER', `Profile ${request.profile} has invalid package.json.`)
       : finding('profile.bundles.invalid', 'BLOCKER', `Profile ${request.profile} has no usable dsh.profile.bundles array.`))
-    return { findings, limitations, dshHome, profile: request.profile, profileDirectory, availableProfiles }
+  } else {
+    findings.push(finding('profile.manifest.valid', 'PASS', `Profile ${request.profile} has a valid bundle declaration.`))
   }
-  const manifest = parsed.manifest
-  findings.push(finding('profile.manifest.valid', 'PASS', `Profile ${request.profile} has a valid bundle declaration.`))
 
   const anchors = [runtime.installationRoot, profileDirectory].filter((anchor): anchor is string => anchor !== undefined)
   const patches: ParsedPatch[] = []
@@ -227,9 +231,11 @@ export async function checkProfile(system: SystemAccess, request: DiagnosticRequ
     const patch = await parsePatch(system, path, findings)
     if (patch !== undefined) patches.push(patch)
   }
-  for (const bundle of manifest.bundles) {
-    const patch = await checkBundle(system, bundle, anchors, findings)
-    if (patch !== undefined) patches.push(patch)
+  if (bundles !== undefined) {
+    for (const bundle of bundles) {
+      const patch = await checkBundle(system, bundle, anchors, findings)
+      if (patch !== undefined) patches.push(patch)
+    }
   }
   for (const patch of patches) await checkPlugins(system, patch, anchors, findings)
   return { findings, limitations, dshHome, profile: request.profile, profileDirectory, availableProfiles }

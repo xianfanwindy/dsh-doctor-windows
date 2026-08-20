@@ -1,6 +1,6 @@
 /* v8 ignore file -- fake system boundary; command behavior is covered by commands.spec.ts. */
 
-import { access, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -80,6 +80,7 @@ export interface ProfileFixture {
   readonly readPaths: string[]
   write(path: string, source: string): Promise<void>
   makeDirectory(path: string): Promise<void>
+  makeDirectoryLink(target: string, path: string): Promise<void>
   addPackage(anchor: string, specifier: string, manifest?: unknown, patch?: { readonly path: string, readonly source: string }): Promise<string>
   remove(): Promise<void>
 }
@@ -142,6 +143,10 @@ export async function createProfileFixture(): Promise<ProfileFixture> {
       await writeFile(path, source, 'utf8')
     },
     makeDirectory: (path) => mkdir(path, { recursive: true }),
+    async makeDirectoryLink(target, path) {
+      await mkdir(join(path, '..'), { recursive: true })
+      await symlink(target, path, 'junction')
+    },
     async addPackage(anchor, specifier, manifest = {}, patch) {
       const segments = packageSegments(specifier)
       if (segments === undefined) throw new Error(`Invalid fixture package specifier: ${specifier}`)

@@ -218,6 +218,22 @@ describe('checkProfile', () => {
     expectBlocker(await checkProfile(directoryPatch.system, { profile: 'doctor' }, runtime(directoryPatch.installationRoot)), 'profile.bundle.patch-missing')
   })
 
+  it('rejects a package patch link whose canonical target escapes the package', async () => {
+    // Would catch the static doctor parsing arbitrary files outside a bundle through an in-package link.
+    const value = await fixture()
+    await validProfile(value, 'doctor', ['bundle'])
+    const packageRoot = await value.addPackage(value.installationRoot, 'bundle', { dsh: { bundle: { patch: 'patch-link/cordis.patch.yml' } } })
+    const outside = join(value.root, 'outside')
+    const outsidePatch = join(outside, 'cordis.patch.yml')
+    await value.write(outsidePatch, '- insert:\n    - name: outside-plugin\n')
+    await value.makeDirectoryLink(outside, join(packageRoot, 'patch-link'))
+
+    const result = await checkProfile(value.system, { profile: 'doctor' }, runtime(value.installationRoot))
+
+    expectBlocker(result, 'profile.bundle.patch-missing')
+    expect(value.readPaths).not.toContain(outsidePatch)
+  })
+
   it('rejects a resolved package without a bundle patch declaration', async () => {
     // Would catch treating every resolved package as a DSH bundle.
     const value = await fixture()
@@ -299,6 +315,27 @@ describe('checkProfile', () => {
       await value.write(join(directory, 'package.json'), JSON.stringify(manifest))
       expectBlocker(await checkProfile(value.system, { profile: 'doctor' }, runtime()), 'profile.bundles.invalid')
     }
+  })
+
+  it('reports invalid manifests or bundles alongside existing patch blockers and names', async () => {
+    // Would catch manifest validation hiding independent invalid patch and unresolved-plugin startup blockers.
+    const malformed = await fixture()
+    const malformedDirectory = await profileTree(malformed)
+    await malformed.write(join(malformedDirectory, 'package.json'), '{')
+    await malformed.write(join(malformedDirectory, 'cordis.patch.yml'), '# no patch entries\n')
+    const malformedResult = await checkProfile(malformed.system, { profile: 'doctor' }, runtime())
+    expectBlocker(malformedResult, 'profile.manifest.parse')
+    expectBlocker(malformedResult, 'profile.patch.empty')
+
+    const invalidBundles = await fixture()
+    const invalidDirectory = await profileTree(invalidBundles)
+    await invalidBundles.write(join(invalidDirectory, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: 'bundle' } } }))
+    await invalidBundles.write(join(invalidBundles.dshHome, 'cordis.patch.yml'), 'insert: [unterminated\n')
+    await invalidBundles.write(join(invalidDirectory, 'cordis.patch.yml'), '- insert:\n    - id: missing\n      name: missing-plugin\n')
+    const invalidBundlesResult = await checkProfile(invalidBundles.system, { profile: 'doctor' }, runtime())
+    expectBlocker(invalidBundlesResult, 'profile.bundles.invalid')
+    expectBlocker(invalidBundlesResult, 'profile.patch.parse')
+    expectBlocker(invalidBundlesResult, 'profile.plugin.unresolved')
   })
 
   it('retains an explicit limitation when profile enumeration is inaccessible', async () => {
