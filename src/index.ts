@@ -1,8 +1,9 @@
 export { summarizeFindings } from './model.ts'
+export { runDoctor } from './doctor.ts'
 export type {
-  DiagnosticReport,
   DiagnosticRequest,
   Finding,
   Severity,
   Summary,
 } from './model.ts'
+export type { SanitizedReport } from './redact.ts'
