@@ -66,10 +66,12 @@ jobs:
             }
             Set-Content -LiteralPath (Join-Path $brokenBin 'dsh.cmd') -Value '@echo off', '"%~dp0node_modules\@deepseek-ai\dsh\lib\bin.js" %*' -Encoding ascii
             $env:DSH_DOCTOR_CI_PATH = "$brokenBin;$limitedPath"
-            $broken = & pwsh.exe -NoProfile -NonInteractive -Command $missingCommand
-            if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE for the broken dsh fixture; expected 1." }
-            $brokenReport = $broken | ConvertFrom-Json
-            if (-not ($brokenReport.findings.checkId -contains 'runtime.dsh.shim-target')) { throw 'Packed CLI did not report runtime.dsh.shim-target for the broken dsh fixture.' }
+            foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
+              $broken = & $shell -NoProfile -NonInteractive -Command $missingCommand
+              if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE for the broken dsh fixture in $shell; expected 1." }
+              $brokenReport = $broken | ConvertFrom-Json
+              if (-not ($brokenReport.findings.checkId -contains 'runtime.dsh.shim-target')) { throw "Packed CLI did not report runtime.dsh.shim-target for the broken dsh fixture in $shell." }
+            }
             $env:DSH_DOCTOR_CI_PATH = $limitedPath
             $markdownCommand = '$env:Path = $env:DSH_DOCTOR_CI_PATH; & $env:DSH_DOCTOR_CI_DOCTOR --dsh-home $env:DSH_DOCTOR_CI_HOME --format markdown --output $env:DSH_DOCTOR_CI_REPORT'
             & pwsh.exe -NoProfile -NonInteractive -Command $markdownCommand
