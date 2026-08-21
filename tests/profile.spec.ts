@@ -316,6 +316,17 @@ describe('checkProfile', () => {
     expect(value.resolveCalls).toEqual([{ specifier: 'installed-plugin', anchors: [directory] }])
   })
 
+  it('does not resolve a non-array insert payload as a plugin descriptor', async () => {
+    const value = await fixture()
+    const directory = await validProfile(value)
+    await value.write(join(directory, 'cordis.patch.yml'), '- insert: installed-plugin\n')
+
+    const result = await checkProfile(value.system, { profile: 'doctor' }, runtime())
+
+    expect(blockers(result)).toEqual([])
+    expect(value.resolveCalls).toEqual([])
+  })
+
   it('reports only PASS findings for a valid profile, external bundle, and two patches', async () => {
     // Would catch a healthy composition being diagnosed through package evaluation or unstable anchor order.
     const value = await fixture()

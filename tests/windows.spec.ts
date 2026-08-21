@@ -134,6 +134,17 @@ describe('checkWindows', () => {
     ])
   })
 
+  it('keeps duplicate direct entries in their deterministic order', async () => {
+    const value = fixture({ entries: [{ name: 'same' }, { name: 'same' }] })
+
+    await checkWindows(value.system, profile(undefined, 'C:\\Users\\Doctor\\.dsh\\profiles\\doctor'))
+
+    expect(value.paths.lstat).toEqual([
+      'C:\\Users\\Doctor\\.dsh\\profiles\\doctor\\node_modules\\same',
+      'C:\\Users\\Doctor\\.dsh\\profiles\\doctor\\node_modules\\same',
+    ])
+  })
+
   it('warns only for a DSH_HOME contained by a synchronized root at a Windows path boundary', async () => {
     const environment = { OneDrive: 'C:\\Users\\Doctor\\OneDrive' }
     const contained = await checkWindows(fixture({ environment }).system, profile('c:\\users\\doctor\\onedrive\\DSH'))

@@ -24,6 +24,10 @@ function redacted(value: string, customRoots = roots): string {
   return JSON.stringify(sanitizeReport(report(value), customRoots))
 }
 
+function redactedValue(value: string): string {
+  return sanitizeReport(report(value), roots).environment.value
+}
+
 describe('sanitizeReport', () => {
   it('removes every sentinel from every serialized report string', () => {
     const dshHome = roots.dshHome
@@ -92,6 +96,14 @@ describe('sanitizeReport', () => {
     expect(result).not.toContain('response="digest-secret"')
     expect(result.toLowerCase()).not.toContain('ghp_0123456789abcdefghijklmnopqrstuv')
     expect(result.toLowerCase()).not.toContain('sk-abcdefghijklmnopqrstuvwxyz0123456789')
+  })
+
+  it('redacts every Digest header parameter without relying on JSON escaping', () => {
+    const raw = 'Authorization: Digest username="doctor"; response="digest-secret"; realm="private"'
+    const result = redactedValue(raw)
+
+    for (const sensitive of ['doctor', 'digest-secret', 'private']) expect(result).not.toContain(sensitive)
+    expect(result).toContain('<REDACTED>')
   })
 
   it('redacts a short secret assigned to GITHUB_TOKEN', () => {

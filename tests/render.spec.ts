@@ -54,6 +54,23 @@ describe('report renderers', () => {
     expect(markdown).toContain('Fix warning.')
   })
 
+  it('omits an absent profile and keeps verbose output valid when a finding has no evidence', () => {
+    const withoutOptionalFields = {
+      ...report,
+      target: { dshHome: '<DSH_HOME>' },
+      findings: [{ checkId: 'info.empty', severity: 'INFO', conclusion: 'No evidence.' }],
+    } as unknown as SanitizedReport
+
+    for (const output of [
+      renderTerminal(withoutOptionalFields, { verbose: true, color: false }),
+      renderMarkdown(withoutOptionalFields, { verbose: true }),
+    ]) {
+      expect(output).toContain('DSH home: <DSH_HOME>')
+      expect(output).not.toContain('Profile:')
+      expect(output).not.toContain('Evidence:')
+    }
+  })
+
   it('uses the required Markdown section order and exactly one trailing newline', () => {
     const value = renderMarkdown(report, { verbose: false })
     const sections = ['## Summary', '## Environment', '## Target', '## Findings', '## Remediation', '## Limitations']

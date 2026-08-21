@@ -195,6 +195,20 @@ describe('checkRuntime', () => {
     expect(result.limitations).toContain('The selected DSH package metadata could not be validated.')
   })
 
+  it('treats a manifest without a dsh bin entry as unknown', async () => {
+    const result = await checkRuntime(runtimeSystem({
+      shim: shimFor(cliTarget),
+      files: {
+        [`${installationRoot}\\package.json`]: JSON.stringify({ version: '0.1.0', engines: { node: '>=22.0.0' } }),
+      },
+    }), commands)
+
+    expect(result.findings).toContainEqual(expect.objectContaining({
+      checkId: 'runtime.dsh.installation-unknown',
+      severity: 'WARNING',
+    }))
+  })
+
   it('accepts the standard npm PowerShell basedir CLI reference', async () => {
     // Would catch rejecting npm's emitted PowerShell shim while accepting invented variable conventions.
     const root = 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\node_modules\\@deepseek-ai\\dsh'
@@ -561,6 +575,20 @@ describe('checkRuntime', () => {
       },
     ]))
     expect(result.findings.find(({ checkId }) => checkId === 'runtime.node.version-command')).not.toHaveProperty('evidence')
+  })
+
+  it('keeps sanitized stderr evidence for a failed Node version probe', async () => {
+    const result = await checkRuntime(runtimeSystem({
+      node: { exitCode: 1, stdout: '', stderr: 'node unavailable\u0000\u001b[31mnow\u001b[0m' },
+      shim: '@echo off\r\nnode "%~dp0custom.js" %*\r\n',
+    }), commands)
+
+    expect(result.findings).toContainEqual({
+      checkId: 'runtime.node.version-command',
+      severity: 'BLOCKER',
+      conclusion: 'node --version exited with code 1.',
+      evidence: ['node unavailable[31mnow[0m'],
+    })
   })
 
   it('uses the baseline range when no installation root can be validated', async () => {
