@@ -141,6 +141,14 @@ describe('packed package release surface', () => {
     await expect(snapshotBelow(dshHome)).resolves.not.toEqual(before)
   })
 
+  it('uses npm-normalized declared bin metadata', async () => {
+    const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
+      readonly bin: { readonly 'dsh-doctor': string }
+    }
+
+    expect(manifest.bin['dsh-doctor']).toBe('lib/cli.mjs')
+  })
+
   it('contains only declared package files and npm metadata', async () => {
     const { contents } = await packedTarball()
     const allowed = new Set(['package/package.json', 'package/cordis.patch.yml', 'package/README.md', 'package/README.zh.md', 'package/LICENSE'])
