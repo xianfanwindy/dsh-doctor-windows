@@ -192,7 +192,14 @@ describe('packed package release surface', () => {
     const powershell = commandOnPath('powershell')
     const pwsh = commandOnPath('pwsh')
     await mkdir(brokenBin, { recursive: true })
-    await writeFile(join(brokenBin, 'dsh.cmd'), '@echo off\r\n"%~dp0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n', 'utf8')
+    await writeFile(join(brokenBin, 'dsh.cmd'), '@echo off\r\n> "%~dp0shim-ran.txt" echo cmd\r\n"%~dp0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n', 'utf8')
+    await writeFile(join(brokenBin, 'dsh.ps1'), [
+      '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
+      'Set-Content -NoNewline -Path "$basedir/shim-ran.txt" -Value ps1',
+      '& "node$exe" "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args',
+      'exit $LASTEXITCODE',
+      '',
+    ].join('\r\n'), 'utf8')
     await expect(access(installedCommand)).resolves.toBeUndefined()
     expect(powershell).toBeDefined()
     expect(pwsh).toBeDefined()
@@ -213,6 +220,7 @@ describe('packed package release surface', () => {
       const brokenReport = JSON.parse(broken.stdout) as { readonly findings: readonly { readonly checkId: string }[] }
       expect(brokenReport.findings.map((finding) => finding.checkId)).toContain('runtime.dsh.shim-target')
     }
+    await expect(stat(join(brokenBin, 'shim-ran.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await snapshotBelow(dshHome)).toEqual(before)
   }, 30_000)
 

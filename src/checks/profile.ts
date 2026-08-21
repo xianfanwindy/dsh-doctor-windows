@@ -1,8 +1,9 @@
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { load } from 'js-yaml'
+import { DEFAULT_SCHEMA, load, Type } from 'js-yaml'
 import type { DiagnosticRequest, Finding } from '../model.ts'
 import type { RuntimeCheckResult } from './runtime.ts'
 import type { SystemAccess } from '../system.ts'
+import { assertProfileName } from '../profile-name.ts'
 
 export interface ProfileCheckResult {
   readonly findings: readonly Finding[]
@@ -23,6 +24,15 @@ interface ParsedPatch {
   readonly path: string
   readonly value: readonly unknown[]
 }
+
+class OpaqueJavaScript {
+  constructor(readonly source: string) {}
+}
+
+const STATIC_YAML_SCHEMA = DEFAULT_SCHEMA.extend([new Type('tag:yaml.org,2002:js', {
+  kind: 'scalar',
+  construct: (source: string) => new OpaqueJavaScript(source),
+})])
 
 function compareNames(left: string, right: string): number {
   return left < right ? -1 : 1
@@ -97,6 +107,30 @@ function yamlLocation(error: unknown, path: string): readonly string[] {
   return [`${path}:${line}:${column}`]
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function containsOpaqueJavaScript(value: unknown): boolean {
+  if (value instanceof OpaqueJavaScript) return true
+  if (Array.isArray(value)) return value.some(containsOpaqueJavaScript)
+  return isRecord(value) && Object.values(value).some(containsOpaqueJavaScript)
+}
+
+function hasDisallowedOpaqueJavaScript(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  return value.some((operation) => {
+    if (!isRecord(operation)) return containsOpaqueJavaScript(operation)
+    return Object.entries(operation).some(([operationName, entries]) => {
+      if (operationName !== 'insert' || !Array.isArray(entries)) return containsOpaqueJavaScript(entries)
+      return entries.some((entry) => {
+        if (!isRecord(entry)) return containsOpaqueJavaScript(entry)
+        return Object.entries(entry).some(([key, child]) => key !== 'disabled' && key !== 'config' && containsOpaqueJavaScript(child))
+      })
+    })
+  })
+}
+
 async function parsePatch(system: SystemAccess, path: string, findings: Finding[]): Promise<ParsedPatch | undefined> {
   let source: string
   try {
@@ -114,7 +148,7 @@ async function parsePatch(system: SystemAccess, path: string, findings: Finding[
 
   let value: unknown
   try {
-    value = load(source)
+    value = load(source, { schema: STATIC_YAML_SCHEMA })
   } catch (error) {
     findings.push(finding('profile.patch.parse', 'BLOCKER', 'Cordis patch YAML could not be parsed.', yamlLocation(error, path)))
     return undefined
@@ -127,16 +161,19 @@ async function parsePatch(system: SystemAccess, path: string, findings: Finding[
     findings.push(finding('profile.patch.invalid', 'BLOCKER', `Cordis patch at ${path} must contain an array.`))
     return undefined
   }
+  if (hasDisallowedOpaqueJavaScript(value)) {
+    findings.push(finding('profile.patch.invalid', 'BLOCKER', `Cordis patch at ${path} uses !!js outside an inserted plugin disabled field or config.`))
+    return undefined
+  }
   findings.push(finding('profile.patch.valid', 'PASS', `Cordis patch at ${path} is a valid array.`))
   return { path, value }
 }
 
 function pluginNames(value: unknown): readonly string[] {
-  if (Array.isArray(value)) return value.flatMap(pluginNames)
-  if (typeof value !== 'object' || value === null) return []
-  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
-    const own = key === 'name' && typeof child === 'string' && packageSegments(child) !== undefined ? [child] : []
-    return [...own, ...pluginNames(child)]
+  if (!Array.isArray(value)) return []
+  return value.flatMap((operation) => {
+    if (!isRecord(operation) || !Array.isArray(operation.insert)) return []
+    return operation.insert.flatMap((entry) => isRecord(entry) && typeof entry.name === 'string' && packageSegments(entry.name) !== undefined ? [entry.name] : [])
   })
 }
 
@@ -193,6 +230,7 @@ async function checkBundle(system: SystemAccess, specifier: string, anchors: rea
 
 /** Statically checks the selected DSH profile without loading target packages. */
 export async function checkProfile(system: SystemAccess, request: DiagnosticRequest, runtime: RuntimeCheckResult): Promise<ProfileCheckResult> {
+  if (request.profile !== undefined) assertProfileName(request.profile)
   const dshHome = resolve(request.dshHome ?? system.environment.DSH_HOME ?? join(system.homeDir, '.dsh'))
   const findings: Finding[] = [finding('profile.dsh-home.resolved', 'PASS', `Resolved DSH_HOME to ${dshHome}.`)]
   const limitations: string[] = []

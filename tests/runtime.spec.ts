@@ -133,24 +133,21 @@ describe('checkRuntime', () => {
     })
   })
 
-  it('blocks a failing dsh version command without leaking shim or manifest source', async () => {
-    // Would catch a broken launcher being hidden, or source text being copied into shareable diagnostic evidence.
-    const shim = shimFor(cliTarget)
-    const manifest = installation(installationRoot)[`${installationRoot}\\package.json`]!
+  it.each([
+    ['cmd', commands, shimFor(cliTarget)],
+    ['PowerShell', { ...commands, commands: { ...commands.commands, dsh: 'C:\\Users\\Doctor\\AppData\\Roaming\\npm\\dsh.ps1' } }, standardPowerShellShim()],
+  ] as const)('inspects a selected %s npm shim without executing it', async (_kind, selected, shim) => {
+    const calls: string[] = []
+
     const result = await checkRuntime(runtimeSystem({
-      dsh: { exitCode: 1, stdout: '', stderr: 'launch failed\u0000\u001b[31mnow\u001b[0m' },
       shim,
       files: installation(installationRoot),
-    }), commands)
-    const finding = result.findings.find(({ checkId }) => checkId === 'runtime.dsh.version-command')
+      onRun(file) { calls.push(file) },
+    }), selected)
 
-    expect(finding).toMatchObject({
-      severity: 'BLOCKER',
-      conclusion: 'dsh --version exited with code 1.',
-      evidence: ['launch failed[31mnow[0m'],
-    })
-    expect(JSON.stringify(result)).not.toContain(shim)
-    expect(JSON.stringify(result)).not.toContain(manifest)
+    expect(calls).toEqual([commands.commands.node])
+    expect(result.environment).toMatchObject({ 'dsh.installationVersion': '0.1.0' })
+    expect(result.installationRoot).toBe(installationRoot)
   })
 
   it('blocks a recognized shim whose CLI target is absent', async () => {
@@ -167,20 +164,6 @@ describe('checkRuntime', () => {
     })
   })
 
-  it('warns when command and manifest DSH versions differ', async () => {
-    // Would catch version output being trusted even when it describes a different DSH installation.
-    const result = await checkRuntime(runtimeSystem({
-      dsh: { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
-      shim: shimFor(cliTarget),
-      files: installation(installationRoot, '0.1.0'),
-    }), commands)
-
-    expect(result.findings).toContainEqual({
-      checkId: 'runtime.dsh.version-mismatch',
-      severity: 'WARNING',
-      conclusion: 'dsh --version (0.2.0) differs from installation metadata (0.1.0).',
-    })
-  })
 
   it('warns with a limitation when the selected shim has no accepted installation reference', async () => {
     // Would catch guessing an installation root from an arbitrary command script.
@@ -503,8 +486,8 @@ describe('checkRuntime', () => {
     }
   })
 
-  it('forwards the request abort signal only to selected version commands', async () => {
-    // Would catch a cancelled doctor request leaving the two bounded subprocess probes running.
+  it('forwards the request abort signal only to the selected Node version command', async () => {
+    // Would catch a cancelled doctor request leaving a bounded Node probe running or starting a DSH shim.
     const controller = new AbortController()
     const calls: Array<{ readonly file: string, readonly args: readonly string[], readonly signal: AbortSignal | undefined }> = []
     await checkRuntime(runtimeSystem({
@@ -515,7 +498,6 @@ describe('checkRuntime', () => {
 
     expect(calls).toEqual([
       { file: commands.commands.node, args: ['--version'], signal: controller.signal },
-      { file: commands.commands.dsh, args: ['--version'], signal: controller.signal },
     ])
   })
 
@@ -523,7 +505,6 @@ describe('checkRuntime', () => {
     // Would catch a malformed executable response silently bypassing the runtime compatibility check.
     const result = await checkRuntime(runtimeSystem({
       node: { exitCode: 0, stdout: 'not-a-version\n', stderr: '' },
-      dsh: { exitCode: 0, stdout: 'still-not-a-version\n', stderr: '' },
       shim: shimFor(cliTarget),
       files: installation(installationRoot),
     }), commands)
@@ -534,14 +515,9 @@ describe('checkRuntime', () => {
         severity: 'BLOCKER',
         conclusion: 'node --version did not return a valid semantic version.',
       },
-      {
-        checkId: 'runtime.dsh.version-invalid',
-        severity: 'WARNING',
-        conclusion: 'dsh --version did not return a valid semantic version.',
-      },
     ]))
     expect(result.environment).not.toHaveProperty('node.version')
-    expect(result.environment).not.toHaveProperty('dsh.version')
+    expect(result.environment).toHaveProperty('dsh.installationVersion', '0.1.0')
   })
 
   it('does not run an unselected DSH command', async () => {
@@ -574,7 +550,6 @@ describe('checkRuntime', () => {
     // Would catch failed subprocesses being mistaken for valid but absent versions.
     const result = await checkRuntime(runtimeSystem({
       node: { exitCode: 1, stdout: '', stderr: '' },
-      dsh: { exitCode: 1, stdout: '', stderr: '' },
       shim: '@echo off\r\nnode "%~dp0custom.js" %*\r\n',
     }), commands)
 
@@ -584,14 +559,8 @@ describe('checkRuntime', () => {
         severity: 'BLOCKER',
         conclusion: 'node --version exited with code 1.',
       },
-      {
-        checkId: 'runtime.dsh.version-command',
-        severity: 'BLOCKER',
-        conclusion: 'dsh --version exited with code 1.',
-      },
     ]))
     expect(result.findings.find(({ checkId }) => checkId === 'runtime.node.version-command')).not.toHaveProperty('evidence')
-    expect(result.findings.find(({ checkId }) => checkId === 'runtime.dsh.version-command')).not.toHaveProperty('evidence')
   })
 
   it('uses the baseline range when no installation root can be validated', async () => {

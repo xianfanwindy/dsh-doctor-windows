@@ -1,6 +1,5 @@
 import { constants } from 'node:fs'
 import { join } from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { runDoctor } from '../src/doctor.ts'
 import { createSystemAccess } from '../src/system.ts'
@@ -41,24 +40,6 @@ describe('createSystemAccess', () => {
     const pending = system.run(process.execPath, ['-e', 'setTimeout(() => {}, 5_000)'], controller.signal)
     controller.abort()
     await expect(pending).resolves.toMatchObject({ exitCode: 1, error: expect.objectContaining({ name: 'AbortError' }) })
-  })
-
-  it.skipIf(process.platform !== 'win32')('runs normal and stale temporary batch shims through cmd.exe without accepting command metacharacters', async () => {
-    const system = createSystemAccess()
-    let directory: string | undefined
-    try {
-      directory = await system.makeTempDir(join(system.tempDir, 'dsh-doctor-system-shim-'))
-      const normal = join(directory, 'dsh.cmd')
-      const stale = join(directory, 'stale-dsh.cmd')
-      await writeFile(normal, '@echo off\r\necho 0.1.0\r\n', 'utf8')
-      await writeFile(stale, '@echo off\r\n"%~dp0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n', 'utf8')
-
-      await expect(system.run(normal, ['--version'])).resolves.toMatchObject({ exitCode: 0, stdout: expect.stringContaining('0.1.0') })
-      await expect(system.run(stale, ['--version'])).resolves.toMatchObject({ exitCode: expect.any(Number), error: expect.any(Error) })
-      await expect(system.run(normal, ['--version&whoami'])).rejects.toThrow('Unsafe Windows batch command token.')
-    } finally {
-      if (directory !== undefined) await system.removeDir(directory)
-    }
   })
 
   it('adapts filesystem operations inside one private temporary directory', async () => {

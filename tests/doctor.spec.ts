@@ -115,4 +115,13 @@ describe('runDoctor', () => {
 
     expect(state.calls).toEqual([])
   })
+
+  it('rejects a traversal profile before invoking any checks', async () => {
+    state.error = undefined
+    state.calls.length = 0
+
+    await expect(runDoctor({ profile: '..\\outside' }, system())).rejects.toThrow('Invalid profile name.')
+
+    expect(state.calls).toEqual([])
+  })
 })

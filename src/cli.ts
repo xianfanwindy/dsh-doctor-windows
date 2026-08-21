@@ -9,9 +9,9 @@ import { runDoctor } from './doctor.ts'
 import type { DiagnosticRequest } from './model.ts'
 import type { SanitizedReport } from './redact.ts'
 import { renderJson, renderMarkdown, renderTerminal } from './render.ts'
+import { assertProfileName } from './profile-name.ts'
 
 const require = createRequire(import.meta.url)
-const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const USAGE = 'Usage: dsh-doctor [--profile <name>] [--dsh-home <path>] [--format terminal|markdown|json] [--output <path>] [--no-color] [--verbose] [--version] [--help]\n'
 
 interface TextOutput {
@@ -63,7 +63,7 @@ function parse(argv: readonly string[]): ParsedOptions {
   const dshHome = scalar(values['dsh-home'])
   const format = scalar(values.format) ?? 'terminal'
   const output = scalar(values.output)
-  if (profile !== undefined && !PROFILE_NAME.test(profile)) throw new TypeError('Invalid profile name.')
+  if (profile !== undefined) assertProfileName(profile)
   if (format !== 'terminal' && format !== 'markdown' && format !== 'json') throw new TypeError('Invalid format.')
   return {
     ...(profile === undefined ? {} : { profile }),

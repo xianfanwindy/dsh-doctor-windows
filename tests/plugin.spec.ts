@@ -67,6 +67,17 @@ describe('Cordis doctor plugin', () => {
     expect(fixture.tools.get('dsh_doctor')).toBeUndefined()
   })
 
+  it('rejects a traversal profile before invoking the doctor', async () => {
+    const fixture = createRegistryFixture()
+    const fiber = fixture.ctx.plugin({ name, inject, apply })
+    await fiber
+    const definition = fixture.tools.get('dsh_doctor')
+
+    await expect(definition?.execute({ profile: '..\\outside' }, { signal: new AbortController().signal } as never)).rejects.toThrow('Invalid profile name.')
+    expect(doctor.runDoctor).not.toHaveBeenCalled()
+    await fiber.dispose()
+  })
+
   it('forwards the optional profile and execution signal while preserving the sanitized report identity', async () => {
     const fixture = createRegistryFixture()
     const fiber = fixture.ctx.plugin({ name, inject, apply })

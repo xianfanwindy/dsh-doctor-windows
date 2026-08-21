@@ -5,6 +5,7 @@ import { checkWindows, type WindowsCheckResult } from './checks/windows.ts'
 import { summarizeFindings, type DiagnosticRequest, type Finding } from './model.ts'
 import { sanitizeReport, type SanitizedReport } from './redact.ts'
 import { createSystemAccess, type SystemAccess } from './system.ts'
+import { assertProfileName } from './profile-name.ts'
 
 function errorClass(error: unknown): string {
   if (error instanceof TypeError) return 'TypeError'
@@ -31,6 +32,7 @@ function windowsFallback(): WindowsCheckResult {
 
 export async function runDoctor(request: DiagnosticRequest, system: SystemAccess = createSystemAccess()): Promise<SanitizedReport> {
   if (system.platform !== 'win32') throw new Error('DSH Doctor requires Windows.')
+  if (request.profile !== undefined) assertProfileName(request.profile)
 
   const findings: Finding[] = []
   const limitations: string[] = []

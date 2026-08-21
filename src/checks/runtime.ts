@@ -165,21 +165,19 @@ export async function checkRuntime(system: SystemAccess, commandCheck: CommandCh
   const findings: Finding[] = []
   const limitations: string[] = []
   const environment: Record<string, string> = {}
-  const nodeResult = commandCheck.commands.node === undefined ? undefined : await system.run(commandCheck.commands.node, ['--version'], signal)
-  const dshResult = commandCheck.commands.dsh === undefined ? undefined : await system.run(commandCheck.commands.dsh, ['--version'], signal)
-  const nodeVersion = nodeResult?.exitCode === 0 ? normalizedVersion(nodeResult.stdout) : undefined
-  const dshVersion = dshResult?.exitCode === 0 ? normalizedVersion(dshResult.stdout) : undefined
-
-  if (nodeResult !== undefined && nodeResult.exitCode !== 0) findings.push(commandFailure('runtime.node.version-command', 'node', nodeResult))
-  if (dshResult !== undefined && dshResult.exitCode !== 0) findings.push(commandFailure('runtime.dsh.version-command', 'dsh', dshResult))
-  if (nodeResult !== undefined && nodeResult.exitCode === 0 && nodeVersion === undefined) {
-    findings.push({ checkId: 'runtime.node.version-invalid', severity: 'BLOCKER', conclusion: 'node --version did not return a valid semantic version.' })
+  let nodeVersion: string | undefined
+  let nodeProbed = false
+  const probeNode = async (): Promise<void> => {
+    if (nodeProbed) return
+    nodeProbed = true
+    const nodeResult = commandCheck.commands.node === undefined ? undefined : await system.run(commandCheck.commands.node, ['--version'], signal)
+    nodeVersion = nodeResult?.exitCode === 0 ? normalizedVersion(nodeResult.stdout) : undefined
+    if (nodeResult !== undefined && nodeResult.exitCode !== 0) findings.push(commandFailure('runtime.node.version-command', 'node', nodeResult))
+    if (nodeResult !== undefined && nodeResult.exitCode === 0 && nodeVersion === undefined) {
+      findings.push({ checkId: 'runtime.node.version-invalid', severity: 'BLOCKER', conclusion: 'node --version did not return a valid semantic version.' })
+    }
+    if (nodeVersion !== undefined) environment['node.version'] = nodeVersion
   }
-  if (dshResult !== undefined && dshResult.exitCode === 0 && dshVersion === undefined) {
-    findings.push({ checkId: 'runtime.dsh.version-invalid', severity: 'WARNING', conclusion: 'dsh --version did not return a valid semantic version.' })
-  }
-  if (nodeVersion !== undefined) environment['node.version'] = nodeVersion
-  if (dshVersion !== undefined) environment['dsh.version'] = dshVersion
 
   const shimPath = commandCheck.commands.dsh
   if (shimPath === undefined) {
@@ -228,13 +226,7 @@ export async function checkRuntime(system: SystemAccess, commandCheck: CommandCh
       } else {
         environment['dsh.nodeRange'] = manifest.nodeRange
         environment['dsh.installationVersion'] = manifest.version
-        if (dshVersion !== undefined && dshVersion !== manifest.version) {
-          findings.push({
-            checkId: 'runtime.dsh.version-mismatch',
-            severity: 'WARNING',
-            conclusion: `dsh --version (${dshVersion}) differs from installation metadata (${manifest.version}).`,
-          })
-        }
+        await probeNode()
         if (nodeVersion !== undefined) {
           findings.push(satisfies(nodeVersion, manifest.nodeRange)
             ? { checkId: 'runtime.node.supported', severity: 'PASS', conclusion: `Node.js ${nodeVersion} satisfies ${manifest.nodeRange}.` }
@@ -245,6 +237,7 @@ export async function checkRuntime(system: SystemAccess, commandCheck: CommandCh
     }
   }
 
+  await probeNode()
   if (nodeVersion !== undefined) {
     findings.push(satisfies(nodeVersion, BASELINE_NODE_RANGE)
       ? { checkId: 'runtime.node.supported', severity: 'PASS', conclusion: `Node.js ${nodeVersion} satisfies ${BASELINE_NODE_RANGE}.` }

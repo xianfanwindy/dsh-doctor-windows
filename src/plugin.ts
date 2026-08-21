@@ -3,6 +3,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue } from '@deepseek-ai/dsh-tools'
 import { runDoctor } from './doctor.ts'
 import type { SanitizedReport } from './redact.ts'
+import { assertProfileName } from './profile-name.ts'
 
 export const name = 'dsh-doctor-windows'
 export const inject = ['tools']
@@ -75,6 +76,7 @@ export function apply(ctx: Context): void {
       }],
     },
     async execute(args, exec) {
+      if (args.profile !== undefined) assertProfileName(args.profile)
       const report = await runDoctor({ profile: args.profile, signal: exec.signal })
       return asDoctorToolValue(report)
     },

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { access, lstat, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
-import { extname, join } from 'node:path'
+import { join } from 'node:path'
 import type { Dirent, Stats } from 'node:fs'
 
 export interface RunResult {
@@ -35,8 +35,6 @@ export interface SystemAccess {
 
 const MAX_BUFFER = 64 * 1024
 const RUN_TIMEOUT_MS = 5_000
-const BATCH_EXTENSION = new Set(['.bat', '.cmd'])
-const BATCH_META_CHARACTER = /[&|<>()^%!"\r\n]/u
 
 function copiedEnvironment(): Readonly<Record<string, string>> {
   return Object.fromEntries(Object.entries(process.env).filter(
@@ -44,29 +42,12 @@ function copiedEnvironment(): Readonly<Record<string, string>> {
   ))
 }
 
-function batchInvocation(file: string, args: readonly string[]): { readonly file: string, readonly args: readonly string[] } | undefined {
-  if (process.platform !== 'win32' || !BATCH_EXTENSION.has(extname(file).toLowerCase())) return undefined
-  const tokens = [file, ...args]
-  if (tokens.some((token) => BATCH_META_CHARACTER.test(token))) throw new TypeError('Unsafe Windows batch command token.')
-  return {
-    file: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe'),
-    args: ['/d', '/s', '/c', `call ${tokens.map((token) => `"${token}"`).join(' ')}`],
-  }
-}
-
 function run(file: string, args: readonly string[], signal?: AbortSignal): Promise<RunResult> {
-  let invocation: { readonly file: string, readonly args: readonly string[] } | undefined
-  try {
-    invocation = batchInvocation(file, args)
-  } catch (error) {
-    return Promise.reject(error)
-  }
   return new Promise((resolve) => {
-    execFile(invocation?.file ?? file, invocation?.args ?? args, {
+    execFile(file, args, {
       encoding: 'buffer',
       maxBuffer: MAX_BUFFER,
       shell: false,
-      windowsVerbatimArguments: invocation !== undefined,
       signal,
       timeout: RUN_TIMEOUT_MS,
       windowsHide: true,

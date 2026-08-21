@@ -70,6 +70,14 @@ describe('checkProfile', () => {
     expect(result.profileDirectory).toBeUndefined()
   })
 
+  it.each(['..\\outside', '../outside'])('rejects traversal profile %s before reading from the profiles directory', async (profile) => {
+    const value = await fixture()
+
+    await expect(checkProfile(value.system, { profile }, runtime())).rejects.toThrow('Invalid profile name.')
+
+    expect(value.readPaths).toEqual([])
+  })
+
   it('reports malformed profile JSON without executing profile code', async () => {
     // Would catch a syntax failure surfacing as a loader crash or executing a target package to inspect it.
     const value = await fixture()
@@ -138,6 +146,36 @@ describe('checkProfile', () => {
 
       expectBlocker(result, source === '---\n' ? 'profile.patch.empty' : 'profile.patch.invalid')
     }
+  })
+
+  it('accepts inert !!js values in an inserted plugin disabled field and config', async () => {
+    const value = await fixture()
+    const directory = await validProfile(value)
+    await value.addPackage(directory, 'installed-plugin')
+    await value.write(join(directory, 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: disabled',
+      '      name: installed-plugin',
+      '      disabled: !!js "session => false"',
+      '    - id: config',
+      '      name: installed-plugin',
+      '      config: !!js "({ retries: 1 })"',
+      '',
+    ].join('\n'))
+
+    const result = await checkProfile(value.system, { profile: 'doctor' }, runtime())
+
+    expect(blockers(result)).toEqual([])
+  })
+
+  it('rejects !!js outside an inserted plugin disabled field or config', async () => {
+    const value = await fixture()
+    const directory = await validProfile(value)
+    await value.write(join(directory, 'cordis.patch.yml'), '- disabled: !!js "session => false"\n')
+
+    const result = await checkProfile(value.system, { profile: 'doctor' }, runtime())
+
+    expectBlocker(result, 'profile.patch.invalid')
   })
 
   it('reports malformed YAML with only the path and one-based location', async () => {
@@ -256,6 +294,26 @@ describe('checkProfile', () => {
     expectBlocker(result, 'profile.plugin.unresolved')
     expect(value.resolveCalls).toContainEqual({ specifier: 'missing-plugin', anchors: [value.installationRoot, directory] })
     expect(value.readPaths.some((path) => path.endsWith('index.js'))).toBe(false)
+  })
+
+  it('treats inserted plugin config as opaque data when resolving plugin names', async () => {
+    const value = await fixture()
+    const directory = await validProfile(value)
+    await value.addPackage(directory, 'installed-plugin')
+    await value.write(join(directory, 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: installed',
+      '      name: installed-plugin',
+      '      config:',
+      '        nested:',
+      '          name: unresolvable-config-name',
+      '',
+    ].join('\n'))
+
+    const result = await checkProfile(value.system, { profile: 'doctor' }, runtime())
+
+    expect(blockers(result)).toEqual([])
+    expect(value.resolveCalls).toEqual([{ specifier: 'installed-plugin', anchors: [directory] }])
   })
 
   it('reports only PASS findings for a valid profile, external bundle, and two patches', async () => {

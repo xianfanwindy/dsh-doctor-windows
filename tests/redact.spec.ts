@@ -34,6 +34,7 @@ describe('sanitizeReport', () => {
       roots.temp,
       'https://user:pass@example.com/a?token=SECRET#frag',
       'Authorization: Bearer SECRET',
+      'Authorization: Basic dXNlcjpwYXNzd29yZA==',
       'DEEPSEEK_API_KEY=SECRET',
       'ghp_0123456789abcdefghijklmnopqrstuv',
       entropy,
@@ -83,9 +84,12 @@ describe('sanitizeReport', () => {
   })
 
   it('redacts credential assignments, authorization credentials, and recognized token forms', () => {
-    const result = redacted('api-key: SECRET; DEEPSEEK_API_KEY=SECRET; Authorization: Bearer SECRET; GHP_0123456789ABCDEFGHIJKLMNOPQRSTUV; SK-abcdefghijklmnopqrstuvwxyz0123456789')
+    const result = redacted('api-key: SECRET; DEEPSEEK_API_KEY=SECRET; Authorization: Bearer SECRET; Authorization: Basic dXNlcjpwYXNzd29yZA==; Authorization: Digest username="doctor"; response="digest-secret"; GHP_0123456789ABCDEFGHIJKLMNOPQRSTUV; SK-abcdefghijklmnopqrstuvwxyz0123456789')
 
     expect(result).not.toContain('SECRET')
+    expect(result).not.toContain('dXNlcjpwYXNzd29yZA==')
+    expect(result).not.toContain('username="doctor"')
+    expect(result).not.toContain('response="digest-secret"')
     expect(result.toLowerCase()).not.toContain('ghp_0123456789abcdefghijklmnopqrstuv')
     expect(result.toLowerCase()).not.toContain('sk-abcdefghijklmnopqrstuvwxyz0123456789')
   })

@@ -61,7 +61,7 @@ Terminal and Markdown reports summarize findings and manual remediation. JSON re
 
 ## Privacy
 
-The doctor performs no network request, telemetry, or report upload. It does not read `.credentials.yaml` or `.env` contents. Reports redact known homes, DSH_HOME, temporary paths, URL credentials, credential-like values, authorization forms, and high-entropy captured values. Redaction reduces, but cannot eliminate, disclosure risk; review a local report before sharing it.
+The doctor performs no network request, telemetry, or report upload, and does not execute a discovered DSH shim. It does not read `.credentials.yaml` or `.env` contents. Reports redact known homes, DSH_HOME, temporary paths, URL credentials, credential-like values, authorization forms, and high-entropy captured values. Redaction reduces, but cannot eliminate, disclosure risk; review a local report before sharing it.
 
 ## Compatibility
 

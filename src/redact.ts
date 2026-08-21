@@ -13,6 +13,7 @@ export interface RedactionRoots {
 const URL_TOKEN = /https?:\/\/[^\s<>"']+/giu
 const CREDENTIAL_ASSIGNMENT = /(?<![A-Za-z0-9_-])(?:[A-Za-z0-9]+_)*(?:api[_-]?key|authorization|credential|deepseek[_-]?api[_-]?key|password|secret|token)(?:_[A-Za-z0-9]+)*\s*([:=])\s*[^\s,;]+/giu
 const BEARER_CREDENTIAL = /\bbearer\s+[^\s,;]+/giu
+const AUTHORIZATION_HEADER = /\bauthorization\s*:\s*[^\r\n;]+/giu
 const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/giu
 const DEEPSEEK_TOKEN = /\b(?:sk|ds)-[A-Za-z0-9_-]{20,}\b/giu
 const HIGH_ENTROPY_TOKEN = /[A-Za-z0-9!@#$%^&*+=._~/-]{32,}/gu
@@ -44,6 +45,7 @@ function redactText(value: string, replacements: readonly (readonly [string, str
   let redacted = value
   for (const [root, placeholder] of replacements) redacted = redacted.replace(new RegExp(escaped(root), 'giu'), placeholder)
   redacted = redactUrl(redacted)
+  redacted = redacted.replace(AUTHORIZATION_HEADER, 'Authorization: <REDACTED>')
   redacted = redacted.replace(BEARER_CREDENTIAL, 'Bearer <REDACTED>')
   redacted = redacted.replace(CREDENTIAL_ASSIGNMENT, (_match, separator: string) => `<REDACTED>${separator}<REDACTED>`)
   redacted = redacted.replace(GITHUB_TOKEN, '<REDACTED>')

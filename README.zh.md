@@ -61,7 +61,7 @@ Terminal 和 Markdown report 会汇总 finding 与手动 remediation。JSON repo
 
 ## Privacy
 
-Doctor 不执行 network request、telemetry 或 report upload。它不读取 `.credentials.yaml` 或 `.env` 的内容。报告会脱敏已知 home、DSH_HOME、temporary path、URL credential、credential-like value、authorization form 以及高熵捕获值。脱敏会降低但不能消除泄露风险；分享前请审阅本地 report。
+Doctor 不执行 network request、telemetry 或 report upload，也不执行发现到的 DSH shim。它不读取 `.credentials.yaml` 或 `.env` 的内容。报告会脱敏已知 home、DSH_HOME、temporary path、URL credential、credential-like value、authorization form 以及高熵捕获值。脱敏会降低但不能消除泄露风险；分享前请审阅本地 report。
 
 ## Compatibility
 
