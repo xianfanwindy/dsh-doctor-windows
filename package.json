@@ -7,13 +7,13 @@
   "sideEffects": false,
   "packageManager": "pnpm@11.7.0",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
-  "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "main": "./lib/index.mjs",
+  "types": "./lib/index.d.mts",
   "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
-    "./plugin": { "types": "./lib/plugin.d.ts", "default": "./lib/plugin.js" }
+    ".": { "types": "./lib/index.d.mts", "default": "./lib/index.mjs" },
+    "./plugin": { "types": "./lib/plugin.d.mts", "default": "./lib/plugin.mjs" }
   },
-  "bin": { "dsh-doctor": "./lib/cli.js" },
+  "bin": { "dsh-doctor": "./lib/cli.mjs" },
   "files": ["lib", "cordis.patch.yml", "README.md", "README.zh.md", "LICENSE"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "scripts": {

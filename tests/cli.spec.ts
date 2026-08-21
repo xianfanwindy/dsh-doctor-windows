@@ -1,7 +1,13 @@
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { access, readFile, rm } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { main, type CliPorts } from '../src/cli.ts'
 import type { SanitizedReport } from '../src/redact.ts'
+
+const execFileAsync = promisify(execFile)
 
 function report(severity: 'BLOCKER' | 'PASS' = 'PASS'): SanitizedReport {
   return {
@@ -163,5 +169,32 @@ describe('main', () => {
     const source = await readFile(new URL('../src/cli.ts', import.meta.url), 'utf8')
 
     expect(source.startsWith('#!/usr/bin/env node\n')).toBe(true)
+  })
+
+  it('builds and executes the CLI target declared by package metadata', async () => {
+    const packagePath = new URL('../package.json', import.meta.url)
+    const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
+    const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as {
+      readonly bin: { readonly 'dsh-doctor': string }
+      readonly version: string
+    }
+    const binTarget = resolve(packageRoot, packageJson.bin['dsh-doctor'])
+
+    await rm(binTarget, { force: true })
+    await execFileAsync(process.execPath, [
+      'node_modules/tsdown/dist/run.mjs',
+      'src/index.ts',
+      'src/cli.ts',
+      '--no-config',
+      '--format', 'esm',
+      '--target', 'es2024',
+      '--dts',
+      '--out-dir', 'lib',
+    ], { cwd: packageRoot })
+    await expect(access(binTarget)).resolves.toBeUndefined()
+
+    const { stdout, stderr } = await execFileAsync(process.execPath, [binTarget, '--version'], { cwd: packageRoot })
+    expect(stderr).toBe('')
+    expect(stdout.trim()).toBe(packageJson.version)
   })
 })
