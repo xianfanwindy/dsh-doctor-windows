@@ -83,6 +83,17 @@ pnpm pack
 
 The packed artifact is the supported test and release input; do not rely on a source checkout behaving like an installed package.
 
+## Release
+
+Maintainers publish only after `pnpm run check` passes. npm publishing requires the maintainer's local two-factor authentication approval; never place a one-time code or access token in source control, logs, or chat.
+
+```powershell
+npm publish --access public --registry=https://registry.npmjs.org --otp=123456
+npm view dsh-doctor-windows version dist-tags --json --registry=https://registry.npmjs.org
+```
+
+Replace `123456` with the current local authenticator code. After publishing, install the registry package into a clean temporary project and confirm that `dsh-doctor --version` works before announcing the release.
+
 ## Uninstall
 
 Remove the Cordis bundle from each profile that uses it, then remove the npm package:

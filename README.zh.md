@@ -2,7 +2,7 @@
 
 `dsh-doctor-windows` 是 DeepSeek Harness（DSH）的非官方、Windows-first 启动诊断工具。它对 DSH 和系统配置保持只读，且不发送 telemetry。
 
-## What it checks
+## 检查项目
 
 独立的 `dsh-doctor` CLI 会检查命令解析、受支持的 Node.js 版本、DSH_HOME 可访问性、所选 profile manifest、Cordis patch 与直接 package link，并且不会加载目标 plugin。其 Cordis plugin 会在恢复后的 DSH session 中提供相同的已脱敏 finding。
 
@@ -18,7 +18,7 @@
 | `windows.link.broken` | 直接 package link 或 junction 已损坏。 |
 | `profile.patch.empty` | Cordis patch 为空或只有注释。 |
 
-## Install
+## 安装
 
 从 npm 安装：
 
@@ -34,7 +34,7 @@ npm install -g .\dsh-doctor-windows-0.1.0.tgz
 
 不支持从 GitHub source checkout 直接安装。该 package 有意不提供 `prepare` script；请使用 npm 或 packed tarball。
 
-## CLI
+## 命令行
 
 ```powershell
 dsh-doctor
@@ -45,7 +45,7 @@ dsh-doctor --profile web --format json --no-color
 
 支持的 option 为 `--profile`、`--dsh-home`、`--format terminal|markdown|json`、`--output`、`--no-color`、`--verbose`、`--version` 和 `--help`。未指定 `--output` 时，CLI 只写入 terminal。
 
-## Cordis plugin
+## Cordis 插件
 
 DSH 能够启动后，将已安装的 package 添加到 profile：
 
@@ -55,23 +55,23 @@ dsh plugin --profile web add dsh-doctor-windows
 
 该 bundle 会添加 `dsh_doctor` tool。它向当前 session 返回已脱敏 report，且不能写入 report file。
 
-## Report and exit codes
+## 报告与退出码
 
 Terminal 和 Markdown report 会汇总 finding 与手动 remediation。JSON report 包含供自动化使用的 `schemaVersion` 与稳定 `checkId`。退出码 `0` 表示没有 blocker，`1` 表示至少有一个 blocker，`2` 表示参数无效或 doctor 初始化失败。
 
-## Privacy
+## 隐私
 
 Doctor 不执行 network request、telemetry 或 report upload，也不执行发现到的 DSH shim。它不读取 `.credentials.yaml` 或 `.env` 的内容。报告会脱敏已知 home、DSH_HOME、temporary path、URL credential、credential-like value、authorization form 以及高熵捕获值。脱敏会降低但不能消除泄露风险；分享前请审阅本地 report。
 
-## Compatibility
+## 兼容性
 
 版本 1 支持 Windows 10 和 Windows 11，PowerShell 5.1 或 PowerShell 7，Node.js `^22.19.0 || >=24.0.0`，以及位于 `PATH` 的 DSH command。Cordis bundle smoke 已针对 `@deepseek-ai/dsh@0.1.0-rc.8` 验证。
 
-## Limitations
+## 限制
 
 Alias 和 shim 的选择可能因 shell 不同而变化。Symbolic link 和 junction 可能受 Windows permission 与 filesystem behavior 影响。Profile 与 bundle format 是可能变化的 pre-release DSH input。版本 1 不支持 macOS 或 Linux、automatic repair、plugin-installation automation、telemetry 或 upload，或 GUI。
 
-## Development
+## 开发
 
 ```powershell
 corepack enable
@@ -83,7 +83,18 @@ pnpm pack
 
 Packed artifact 才是受支持的测试和 release input；不要依赖 source checkout 的行为等同于已安装 package。
 
-## Uninstall
+## 发布
+
+维护者只能在 `pnpm run check` 通过后发布。npm 发布需要维护者在本机完成 two-factor authentication；不得将一次性验证码或 access token 写入 source control、日志或聊天记录。
+
+```powershell
+npm publish --access public --registry=https://registry.npmjs.org --otp=123456
+npm view dsh-doctor-windows version dist-tags --json --registry=https://registry.npmjs.org
+```
+
+将 `123456` 替换为当前本机认证器验证码。发布后，请在干净的临时项目中从 registry 安装 package，并确认 `dsh-doctor --version` 可用后再对外公告。
+
+## 卸载
 
 从每个使用该 bundle 的 profile 中移除它，然后移除 npm package：
 
