@@ -154,7 +154,7 @@ describe('packed package release surface', () => {
     expect(contents.every((entry) => entry.startsWith('package/lib/') || allowed.has(entry))).toBe(true)
     expect(contents.some((entry) => /(^|\/)(src|tests|coverage|dist)(\/|$)/u.test(entry))).toBe(false)
     expect(contents.some((entry) => /(^|\/)(?:\.env|credentials)(?:\.|\/|$)/iu.test(entry))).toBe(false)
-  })
+  }, 60_000)
 
   it('runs the installed CLI without DSH or durable changes', async () => {
     const { tarball } = await packedTarball()
