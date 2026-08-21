@@ -52,6 +52,20 @@ function compareCandidates(left: Candidate, right: Candidate): number {
     || left.path.localeCompare(right.path, undefined, { sensitivity: 'accent' })
 }
 
+function normalizedCommandType(value: unknown): Candidate['commandType'] | undefined {
+  if (value === 'Application' || value === 32) return 'Application'
+  if (value === 'ExternalScript' || value === 16) return 'ExternalScript'
+  return undefined
+}
+
+function normalizedCommandName(value: unknown, commandType: Candidate['commandType']): CommandName | undefined {
+  if (typeof value !== 'string') return undefined
+  const name = commandType === 'Application'
+    ? value.toLowerCase().replace(/\.(?:exe|cmd|bat)$/u, '')
+    : value.toLowerCase().replace(/\.ps1$/u, '')
+  return COMMAND_NAMES.includes(name as CommandName) ? name as CommandName : undefined
+}
+
 function parseCandidates(stdout: string, shell: Shell): readonly Candidate[] | undefined {
   if (stdout.trim() === '') return []
   try {
@@ -59,11 +73,12 @@ function parseCandidates(stdout: string, shell: Shell): readonly Candidate[] | u
     return values.flatMap((value): Candidate[] => {
       if (typeof value !== 'object' || value === null) return []
       const candidate = value as Record<string, unknown>
-      const name = typeof candidate.Name === 'string' ? candidate.Name.toLowerCase() : ''
       const path = typeof candidate.Path === 'string' ? candidate.Path : ''
-      const commandType = candidate.CommandType
-      if (!COMMAND_NAMES.includes(name as CommandName) || path === '' || (commandType !== 'Application' && commandType !== 'ExternalScript')) return []
-      return [{ name: name as CommandName, path, commandType, shell }]
+      const commandType = normalizedCommandType(candidate.CommandType)
+      if (commandType === undefined) return []
+      const name = normalizedCommandName(candidate.Name, commandType)
+      if (name === undefined || path === '') return []
+      return [{ name, path, commandType, shell }]
     })
   } catch {
     return undefined

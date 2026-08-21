@@ -5,6 +5,37 @@ import { createFakeSystem, type CommandCandidate } from './helpers.ts'
 const candidates = (...items: readonly CommandCandidate[]) => items
 
 describe('checkCommands', () => {
+  it('accepts the exact numeric command types emitted by PowerShell JSON', async () => {
+    const result = await checkCommands(createFakeSystem({
+      powershellOutput: JSON.stringify([
+        { Name: 'node.exe', Path: 'C:\\Tools\\node.exe', CommandType: 32 },
+        { Name: 'dsh.cmd', Path: 'C:\\Tools\\dsh.cmd', CommandType: 32 },
+        { Name: 'pnpm.ps1', Path: 'C:\\Tools\\pnpm.ps1', CommandType: 16 },
+      ]),
+      pwshOutput: '',
+    }))
+
+    expect(result.commands).toEqual({
+      node: 'C:\\Tools\\node.exe',
+      dsh: 'C:\\Tools\\dsh.cmd',
+      pnpm: 'C:\\Tools\\pnpm.ps1',
+    })
+  })
+
+  it('rejects unrecognized numeric command types', async () => {
+    const result = await checkCommands(createFakeSystem({
+      powershellOutput: JSON.stringify({ Name: 'dsh', Path: 'C:\\Tools\\dsh.cmd', CommandType: 99 }),
+      pwshOutput: '',
+    }))
+
+    expect(result.commands.dsh).toBeUndefined()
+    expect(result.findings).toContainEqual({
+      checkId: 'command.dsh.missing',
+      severity: 'BLOCKER',
+      conclusion: 'No usable dsh command was found.',
+    })
+  })
+
   it('reports node as a blocker when no candidate exists', async () => {
     // Would catch accidentally treating an empty PowerShell result as a usable node command.
     const result = await checkCommands(createFakeSystem({

@@ -64,7 +64,7 @@ jobs:
               $report = $json | ConvertFrom-Json
               if (-not ($report.findings.checkId -contains 'command.dsh.missing')) { throw "Packed CLI did not report command.dsh.missing in $shell." }
             }
-            Set-Content -LiteralPath (Join-Path $brokenBin 'dsh.cmd') -Value '@echo off', '"%~dp0node_modules\@deepseek-ai\dsh\lib\bin.js" %*' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $brokenBin 'dsh.cmd') -Value '@echo off', '"%~dp0\node_modules\@deepseek-ai\dsh\lib\bin.js" %*' -Encoding ascii
             $env:DSH_DOCTOR_CI_PATH = "$brokenBin;$limitedPath"
             foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
               $broken = & $shell -NoProfile -NonInteractive -Command $missingCommand

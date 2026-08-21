@@ -186,6 +186,34 @@ describe('packed package release surface', () => {
     expect(result.stderr).not.toContain(process.env.USERPROFILE ?? '')
     expect(await snapshotBelow(dshHome)).toEqual(before)
     await expect(stat(join(project, 'dsh-doctor-report.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const brokenBin = join(project, 'broken-dsh')
+    const installedCommand = join(project, 'node_modules', '.bin', 'dsh-doctor.cmd')
+    const powershell = commandOnPath('powershell')
+    const pwsh = commandOnPath('pwsh')
+    await mkdir(brokenBin, { recursive: true })
+    await writeFile(join(brokenBin, 'dsh.cmd'), '@echo off\r\n"%~dp0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n', 'utf8')
+    await expect(access(installedCommand)).resolves.toBeUndefined()
+    expect(powershell).toBeDefined()
+    expect(pwsh).toBeDefined()
+    const pwshDirectory = dirname(pwsh!)
+    const brokenPath = [brokenBin, nodeDirectory, systemRoot === undefined ? undefined : join(systemRoot, 'System32'), systemRoot === undefined ? undefined : join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0'), pwshDirectory]
+      .filter((entry): entry is string => entry !== undefined)
+      .join(';')
+    const shellEnvironment = {
+      ...environmentWithoutDsh(brokenPath, dshHome),
+      DSH_DOCTOR_TEST_PATH: brokenPath,
+      DSH_DOCTOR_TEST_COMMAND: installedCommand,
+      DSH_DOCTOR_TEST_HOME: dshHome,
+    }
+    const shellCommand = '$env:Path = $env:DSH_DOCTOR_TEST_PATH; & $env:DSH_DOCTOR_TEST_COMMAND --dsh-home $env:DSH_DOCTOR_TEST_HOME --format json --no-color'
+    for (const shell of [powershell!, pwsh!]) {
+      const broken = await run(shell, ['-NoProfile', '-NonInteractive', '-Command', shellCommand], project, shellEnvironment)
+      expect(broken.exitCode).toBe(1)
+      const brokenReport = JSON.parse(broken.stdout) as { readonly findings: readonly { readonly checkId: string }[] }
+      expect(brokenReport.findings.map((finding) => finding.checkId)).toContain('runtime.dsh.shim-target')
+    }
+    expect(await snapshotBelow(dshHome)).toEqual(before)
   }, 30_000)
 
   const dsh = commandOnPath('dsh')
