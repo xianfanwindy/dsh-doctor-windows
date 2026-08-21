@@ -1,10 +1,15 @@
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { access, readFile, rm } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
 import type { SanitizedReport } from '../src/redact.ts'
 
 const doctor = vi.hoisted(() => ({ runDoctor: vi.fn() }))
+const execFileAsync = promisify(execFile)
 
 vi.mock('../src/doctor.ts', () => ({ runDoctor: doctor.runDoctor }))
 
@@ -107,5 +112,18 @@ describe('Cordis doctor plugin', () => {
     await expect(readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')).resolves.toBe(
       '- insert:\n    - id: dsh-doctor-windows\n      name: dsh-doctor-windows/plugin\n',
     )
+  })
+
+  it('emits the plugin export artifacts from the normal configured build', async () => {
+    const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
+    const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
+      readonly exports: { readonly './plugin': { readonly default: string, readonly types: string } }
+    }
+
+    await rm(resolve(packageRoot, 'lib'), { force: true, recursive: true })
+    await execFileAsync(process.execPath, ['node_modules/tsdown/dist/run.mjs'], { cwd: packageRoot })
+
+    await expect(access(resolve(packageRoot, manifest.exports['./plugin'].default))).resolves.toBeUndefined()
+    await expect(access(resolve(packageRoot, manifest.exports['./plugin'].types))).resolves.toBeUndefined()
   })
 })

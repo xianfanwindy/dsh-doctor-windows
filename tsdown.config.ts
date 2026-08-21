@@ -5,4 +5,5 @@ export default defineConfig({
   format: ['esm'],
   target: 'es2024',
   dts: true,
+  outDir: 'lib',
 })
