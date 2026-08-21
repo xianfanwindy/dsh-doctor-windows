@@ -1,5 +1,7 @@
 # AGENTS.md
 
+[中文版本](AGENTS.zh.md)
+
 ## Scope
 
 `dsh-doctor-windows` is an unofficial, Windows-first, read-only startup diagnostic for DeepSeek Harness.
