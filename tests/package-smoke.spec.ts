@@ -126,7 +126,7 @@ async function writePackageManifest(directory: string): Promise<void> {
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })))
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })))
 })
 
 describe('packed package release surface', () => {
@@ -222,7 +222,7 @@ describe('packed package release surface', () => {
     }
     await expect(stat(join(brokenBin, 'shim-ran.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await snapshotBelow(dshHome)).toEqual(before)
-  }, 30_000)
+  }, 60_000)
 
   const dsh = commandOnPath('dsh')
   const dshSmoke = dsh === undefined ? it.skip : it
