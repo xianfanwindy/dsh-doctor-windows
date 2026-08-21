@@ -1,0 +1,181 @@
+import { execFile } from 'node:child_process'
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const execFileAsync = promisify(execFile)
+const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const corepack = join(dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'corepack.js')
+const npm = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+const temporaryRoots: string[] = []
+
+function pathValue(name: string): string | undefined {
+  return Object.entries(process.env).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
+}
+
+function commandOnPath(name: string): string | undefined {
+  const path = pathValue('Path')
+  const extensions = (pathValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter((extension) => extension !== '')
+  for (const directory of path?.split(';').filter((entry) => entry !== '') ?? []) {
+    for (const extension of extensions) {
+      const candidate = join(directory, `${name}${extension}`)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return undefined
+}
+
+function environmentWithoutDsh(path: string, dshHome: string): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => {
+    const normalized = key.toLowerCase()
+    return normalized !== 'path' && normalized !== 'dsh_home'
+  }))
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'Path'
+  return { ...inherited, [pathKey]: path, PATHEXT: '.COM;.EXE;.BAT;.CMD', DSH_HOME: dshHome }
+}
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), prefix))
+  temporaryRoots.push(directory)
+  return directory
+}
+
+async function run(file: string, args: readonly string[], cwd: string, environment?: NodeJS.ProcessEnv): Promise<{ readonly exitCode: number, readonly stdout: string, readonly stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(file, args, {
+      cwd,
+      env: environment,
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+    return { exitCode: 0, stdout, stderr }
+  } catch (error) {
+    const result = error as NodeJS.ErrnoException & { readonly stdout?: string, readonly stderr?: string }
+    return {
+      exitCode: typeof result.code === 'number' ? result.code : 1,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+    }
+  }
+}
+
+async function filesBelow(root: string): Promise<readonly string[]> {
+  const entries = await readdir(root, { withFileTypes: true })
+  const files: string[] = []
+  for (const entry of entries) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) files.push(...(await filesBelow(path)).map((child) => join(entry.name, child)))
+    else if (entry.isFile()) files.push(entry.name)
+  }
+  return files.sort((left, right) => left.localeCompare(right))
+}
+
+async function packedTarball(): Promise<{ readonly tarball: string, readonly contents: readonly string[] }> {
+  const staging = await temporaryDirectory('dsh-doctor-package-')
+  const destination = await temporaryDirectory('dsh-doctor-pack-')
+  await Promise.all([
+    cp(join(packageRoot, 'src'), join(staging, 'src'), { recursive: true }),
+    cp(join(packageRoot, 'package.json'), join(staging, 'package.json')),
+    cp(join(packageRoot, 'tsconfig.json'), join(staging, 'tsconfig.json')),
+    cp(join(packageRoot, 'tsdown.config.ts'), join(staging, 'tsdown.config.ts')),
+    cp(join(packageRoot, 'cordis.patch.yml'), join(staging, 'cordis.patch.yml')),
+    cp(join(packageRoot, 'README.md'), join(staging, 'README.md')),
+    cp(join(packageRoot, 'README.zh.md'), join(staging, 'README.zh.md')),
+    cp(join(packageRoot, 'LICENSE'), join(staging, 'LICENSE')),
+  ])
+  await symlink(join(packageRoot, 'node_modules'), join(staging, 'node_modules'), 'junction')
+  const packed = await run(process.execPath, [corepack, 'pnpm', 'pack', '--pack-destination', destination], staging)
+  expect(packed.exitCode).toBe(0)
+  const tarballs = (await readdir(destination)).filter((name) => name.endsWith('.tgz'))
+  expect(tarballs).toHaveLength(1)
+  const tarball = join(destination, tarballs[0]!)
+  const listed = await run('tar.exe', ['-tf', tarball], staging)
+  expect(listed.exitCode).toBe(0)
+  return {
+    tarball,
+    contents: listed.stdout.split(/\r?\n/u).filter((entry) => entry !== '').map((entry) => entry.replace(/^\.\//u, '')).sort((left, right) => left.localeCompare(right)),
+  }
+}
+
+async function writePackageManifest(directory: string): Promise<void> {
+  await writeFile(join(directory, 'package.json'), '{"private":true}\n', 'utf8')
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })))
+})
+
+describe('packed package release surface', () => {
+  it('contains only declared package files and npm metadata', async () => {
+    const { contents } = await packedTarball()
+    const allowed = new Set(['package/package.json', 'package/cordis.patch.yml', 'package/README.md', 'package/README.zh.md', 'package/LICENSE'])
+
+    expect(contents).toContain('package/lib/index.mjs')
+    expect(contents).toContain('package/lib/cli.mjs')
+    expect(contents).toContain('package/lib/plugin.mjs')
+    expect(contents).toContain('package/README.md')
+    expect(contents).toContain('package/README.zh.md')
+    expect(contents).toContain('package/LICENSE')
+    expect(contents.every((entry) => entry.startsWith('package/lib/') || allowed.has(entry))).toBe(true)
+    expect(contents.some((entry) => /(^|\/)(src|tests|coverage|dist)(\/|$)/u.test(entry))).toBe(false)
+    expect(contents.some((entry) => /(^|\/)(?:\.env|credentials)(?:\.|\/|$)/iu.test(entry))).toBe(false)
+  })
+
+  it('runs the installed CLI without DSH or durable changes', async () => {
+    const { tarball } = await packedTarball()
+    const project = await temporaryDirectory('dsh-doctor-install-')
+    const dshHome = join(project, 'dsh-home')
+    await writePackageManifest(project)
+    await mkdir(dshHome, { recursive: true })
+    await writeFile(join(dshHome, 'unchanged.txt'), 'unchanged\n', 'utf8')
+    const before = await filesBelow(dshHome)
+    const install = await run(process.execPath, [npm, 'install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], project)
+    expect(install.exitCode).toBe(0)
+
+    const packageJson = JSON.parse(await readFile(join(project, 'node_modules', 'dsh-doctor-windows', 'package.json'), 'utf8')) as {
+      readonly bin: { readonly 'dsh-doctor': string }
+    }
+    const binary = resolve(project, 'node_modules', 'dsh-doctor-windows', packageJson.bin['dsh-doctor'])
+    await expect(access(binary)).resolves.toBeUndefined()
+    const nodeDirectory = dirname(commandOnPath('node') ?? process.execPath)
+    const systemRoot = process.env.SystemRoot
+    const path = [nodeDirectory, systemRoot === undefined ? undefined : join(systemRoot, 'System32'), systemRoot === undefined ? undefined : join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')]
+      .filter((entry): entry is string => entry !== undefined)
+      .join(';')
+    const result = await run(process.execPath, [binary, '--dsh-home', dshHome, '--format', 'json', '--no-color'], project, environmentWithoutDsh(path, dshHome))
+
+    expect(result.exitCode).toBe(1)
+    const report = JSON.parse(result.stdout) as { readonly findings: readonly { readonly checkId: string }[] }
+    const checkIds = report.findings.map((finding) => finding.checkId)
+    expect(checkIds).toContain('command.dsh.missing')
+    expect(result.stderr).not.toContain(process.env.USERPROFILE ?? '')
+    expect(await filesBelow(dshHome)).toEqual(before)
+    await expect(stat(join(project, 'dsh-doctor-report.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  }, 30_000)
+
+  const dsh = commandOnPath('dsh')
+  const dshSmoke = dsh === undefined ? it.skip : it
+
+  dshSmoke(dsh === undefined
+    ? 'skips real DSH bundle lifecycle smoke because dsh is unavailable on PATH'
+    : 'adds and removes the packed bundle through a real DSH profile', async () => {
+    const { tarball } = await packedTarball()
+    const dshHome = await temporaryDirectory('dsh-doctor-dsh-home-')
+    const environment = { ...process.env, DSH_HOME: dshHome }
+
+    const added = await run(dsh!, ['plugin', '--profile', 'doctor', 'add', tarball], packageRoot, environment)
+    expect(added.exitCode).toBe(0)
+    const present = await run(dsh!, ['--profile', 'doctor', '--dump-config'], packageRoot, environment)
+    expect(present.exitCode).toBe(0)
+    expect(present.stdout).toContain('dsh-doctor-windows/plugin')
+    const removed = await run(dsh!, ['plugin', '--profile', 'doctor', 'remove', 'dsh-doctor-windows'], packageRoot, environment)
+    expect(removed.exitCode).toBe(0)
+    const absent = await run(dsh!, ['--profile', 'doctor', '--dump-config'], packageRoot, environment)
+    expect(absent.exitCode).toBe(0)
+    expect(absent.stdout).not.toContain('dsh-doctor-windows/plugin')
+  })
+})

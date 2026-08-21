@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check
+        run: pnpm run check
+      - name: Build
+        run: pnpm run build
+      - name: Pack
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path .artifacts | Out-Null
+          pnpm pack --pack-destination .artifacts
+      - name: Run packed CLI in PowerShell 5.1 and 7 without DSH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tarball = (Get-ChildItem -LiteralPath .artifacts -Filter *.tgz -File | Select-Object -Single).FullName
+          npm install --prefix .ci-package --ignore-scripts --no-audit --no-fund $tarball
+          $doctor = (Resolve-Path .ci-package\node_modules\.bin\dsh-doctor.cmd).Path
+          $dshHome = Join-Path $env:RUNNER_TEMP 'dsh-doctor-missing-dsh'
+          New-Item -ItemType Directory -Force -Path $dshHome | Out-Null
+          foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
+            $json = & $shell -NoProfile -NonInteractive -Command "& '$doctor' --dsh-home '$dshHome' --format json --no-color"
+            if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE in $shell; expected 1." }
+            $report = $json | ConvertFrom-Json
+            if (-not ($report.findings.checkId -contains 'command.dsh.missing')) { throw "Packed CLI did not report command.dsh.missing in $shell." }
+          }
+          & $doctor --dsh-home $dshHome --format markdown --output .artifacts\sample-report.md
+          if ($LASTEXITCODE -ne 1) { throw "Packed CLI sample report returned $LASTEXITCODE; expected 1." }
+      - name: Install verified DSH for bundle lifecycle smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --prefix .ci-dsh --ignore-scripts --no-audit --no-fund @deepseek-ai/dsh@0.1.0-rc.8
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Resolve-Path .ci-dsh\node_modules\.bin).Path
+      - name: Run real DSH bundle lifecycle smoke
+        run: pnpm exec vitest run tests/package-smoke.spec.ts
+      - name: Upload packed release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-doctor-windows-${{ matrix.node }}
+          path: |
+            .artifacts/*.tgz
+            .artifacts/sample-report.md
+          if-no-files-found: error
