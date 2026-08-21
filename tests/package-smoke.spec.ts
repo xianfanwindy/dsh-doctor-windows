@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { access, cp, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -63,15 +64,34 @@ async function run(file: string, args: readonly string[], cwd: string, environme
   }
 }
 
-async function filesBelow(root: string): Promise<readonly string[]> {
+interface TreeSnapshotEntry {
+  readonly path: string
+  readonly type: 'directory' | 'file' | 'symbolic-link' | 'other'
+  readonly digest?: string
+}
+
+function digest(content: string | Uint8Array): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+async function snapshotBelow(root: string, ancestors: readonly string[] = []): Promise<readonly TreeSnapshotEntry[]> {
   const entries = await readdir(root, { withFileTypes: true })
-  const files: string[] = []
-  for (const entry of entries) {
+  const snapshot: TreeSnapshotEntry[] = []
+  for (const entry of [...entries].sort((left, right) => left.name.localeCompare(right.name))) {
     const path = join(root, entry.name)
-    if (entry.isDirectory()) files.push(...(await filesBelow(path)).map((child) => join(entry.name, child)))
-    else if (entry.isFile()) files.push(entry.name)
+    const relativePath = [...ancestors, entry.name].join('/')
+    if (entry.isDirectory()) {
+      snapshot.push({ path: relativePath, type: 'directory' })
+      snapshot.push(...await snapshotBelow(path, [...ancestors, entry.name]))
+    } else if (entry.isFile()) {
+      snapshot.push({ path: relativePath, type: 'file', digest: digest(await readFile(path)) })
+    } else if (entry.isSymbolicLink()) {
+      snapshot.push({ path: relativePath, type: 'symbolic-link', digest: digest(await readlink(path)) })
+    } else {
+      snapshot.push({ path: relativePath, type: 'other' })
+    }
   }
-  return files.sort((left, right) => left.localeCompare(right))
+  return snapshot
 }
 
 async function packedTarball(): Promise<{ readonly tarball: string, readonly contents: readonly string[] }> {
@@ -110,6 +130,17 @@ afterEach(async () => {
 })
 
 describe('packed package release surface', () => {
+  it('distinguishes a fake DSH_HOME content mutation', async () => {
+    const dshHome = await temporaryDirectory('dsh-doctor-snapshot-')
+    await mkdir(join(dshHome, 'profiles', 'doctor'), { recursive: true })
+    await writeFile(join(dshHome, 'profiles', 'doctor', 'package.json'), '{"version":1}\n', 'utf8')
+    const before = await snapshotBelow(dshHome)
+
+    await writeFile(join(dshHome, 'profiles', 'doctor', 'package.json'), '{"version":2}\n', 'utf8')
+
+    await expect(snapshotBelow(dshHome)).resolves.not.toEqual(before)
+  })
+
   it('contains only declared package files and npm metadata', async () => {
     const { contents } = await packedTarball()
     const allowed = new Set(['package/package.json', 'package/cordis.patch.yml', 'package/README.md', 'package/README.zh.md', 'package/LICENSE'])
@@ -132,7 +163,7 @@ describe('packed package release surface', () => {
     await writePackageManifest(project)
     await mkdir(dshHome, { recursive: true })
     await writeFile(join(dshHome, 'unchanged.txt'), 'unchanged\n', 'utf8')
-    const before = await filesBelow(dshHome)
+    const before = await snapshotBelow(dshHome)
     const install = await run(process.execPath, [npm, 'install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], project)
     expect(install.exitCode).toBe(0)
 
@@ -153,7 +184,7 @@ describe('packed package release surface', () => {
     const checkIds = report.findings.map((finding) => finding.checkId)
     expect(checkIds).toContain('command.dsh.missing')
     expect(result.stderr).not.toContain(process.env.USERPROFILE ?? '')
-    expect(await filesBelow(dshHome)).toEqual(before)
+    expect(await snapshotBelow(dshHome)).toEqual(before)
     await expect(stat(join(project, 'dsh-doctor-report.md'))).rejects.toMatchObject({ code: 'ENOENT' })
   }, 30_000)
 

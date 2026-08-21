@@ -34,19 +34,49 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $tarball = (Get-ChildItem -LiteralPath .artifacts -Filter *.tgz -File | Select-Object -Single).FullName
-          npm install --prefix .ci-package --ignore-scripts --no-audit --no-fund $tarball
-          $doctor = (Resolve-Path .ci-package\node_modules\.bin\dsh-doctor.cmd).Path
-          $dshHome = Join-Path $env:RUNNER_TEMP 'dsh-doctor-missing-dsh'
-          New-Item -ItemType Directory -Force -Path $dshHome | Out-Null
-          foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
-            $json = & $shell -NoProfile -NonInteractive -Command "& '$doctor' --dsh-home '$dshHome' --format json --no-color"
-            if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE in $shell; expected 1." }
-            $report = $json | ConvertFrom-Json
-            if (-not ($report.findings.checkId -contains 'command.dsh.missing')) { throw "Packed CLI did not report command.dsh.missing in $shell." }
+          $tarballs = @(Get-ChildItem -LiteralPath .artifacts -Filter *.tgz -File)
+          if ($tarballs.Count -ne 1) { throw "Expected one packed tarball, found $($tarballs.Count)." }
+          $runRoot = Join-Path $env:RUNNER_TEMP ("dsh-doctor-ci-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $runRoot | Out-Null
+          try {
+            $packageHome = Join-Path $runRoot 'package'
+            $dshHome = Join-Path $runRoot 'dsh-home'
+            $brokenBin = Join-Path $runRoot 'broken-dsh'
+            New-Item -ItemType Directory -Path $dshHome, $brokenBin | Out-Null
+            npm install --prefix $packageHome --ignore-scripts --no-audit --no-fund $tarballs[0].FullName
+            $doctor = (Resolve-Path (Join-Path $packageHome 'node_modules\.bin\dsh-doctor.cmd')).Path
+            $nodeDirectory = Split-Path -Parent (Get-Command node.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Source)
+            $pwshDirectory = Split-Path -Parent (Get-Command pwsh.exe -CommandType Application | Select-Object -First 1 -ExpandProperty Source)
+            $limitedPath = (@(
+              $nodeDirectory
+              (Join-Path $env:SystemRoot 'System32')
+              (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+              $pwshDirectory
+            ) | Select-Object -Unique) -join ';'
+            $env:DSH_DOCTOR_CI_PATH = $limitedPath
+            $env:DSH_DOCTOR_CI_DOCTOR = $doctor
+            $env:DSH_DOCTOR_CI_HOME = $dshHome
+            $env:DSH_DOCTOR_CI_REPORT = (Resolve-Path .artifacts).Path + '\sample-report.md'
+            $missingCommand = '$env:Path = $env:DSH_DOCTOR_CI_PATH; & $env:DSH_DOCTOR_CI_DOCTOR --dsh-home $env:DSH_DOCTOR_CI_HOME --format json --no-color'
+            foreach ($shell in @('powershell.exe', 'pwsh.exe')) {
+              $json = & $shell -NoProfile -NonInteractive -Command $missingCommand
+              if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE in $shell; expected 1." }
+              $report = $json | ConvertFrom-Json
+              if (-not ($report.findings.checkId -contains 'command.dsh.missing')) { throw "Packed CLI did not report command.dsh.missing in $shell." }
+            }
+            Set-Content -LiteralPath (Join-Path $brokenBin 'dsh.cmd') -Value '@echo off', '"%~dp0node_modules\@deepseek-ai\dsh\lib\bin.js" %*' -Encoding ascii
+            $env:DSH_DOCTOR_CI_PATH = "$brokenBin;$limitedPath"
+            $broken = & pwsh.exe -NoProfile -NonInteractive -Command $missingCommand
+            if ($LASTEXITCODE -ne 1) { throw "Packed CLI returned $LASTEXITCODE for the broken dsh fixture; expected 1." }
+            $brokenReport = $broken | ConvertFrom-Json
+            if (-not ($brokenReport.findings.checkId -contains 'runtime.dsh.shim-target')) { throw 'Packed CLI did not report runtime.dsh.shim-target for the broken dsh fixture.' }
+            $env:DSH_DOCTOR_CI_PATH = $limitedPath
+            $markdownCommand = '$env:Path = $env:DSH_DOCTOR_CI_PATH; & $env:DSH_DOCTOR_CI_DOCTOR --dsh-home $env:DSH_DOCTOR_CI_HOME --format markdown --output $env:DSH_DOCTOR_CI_REPORT'
+            & pwsh.exe -NoProfile -NonInteractive -Command $markdownCommand
+            if ($LASTEXITCODE -ne 1) { throw "Packed CLI sample report returned $LASTEXITCODE; expected 1." }
+          } finally {
+            Remove-Item -LiteralPath $runRoot -Recurse -Force
           }
-          & $doctor --dsh-home $dshHome --format markdown --output .artifacts\sample-report.md
-          if ($LASTEXITCODE -ne 1) { throw "Packed CLI sample report returned $LASTEXITCODE; expected 1." }
       - name: Install verified DSH for bundle lifecycle smoke
         shell: pwsh
         run: |
